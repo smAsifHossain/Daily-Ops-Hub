@@ -1307,7 +1307,7 @@
   function renderForgot() {
     return `
       <h2>Reset password</h2>
-      <p>Request a reset email. The message is intentionally generic so account existence is not exposed.</p>
+      <p>Enter your account email to receive a reset code and choose a new password securely.</p>
       <form class="form-grid" data-form="forgot">
         ${field("email", "Email", "email", "", true)}
         <div class="auth-actions">
