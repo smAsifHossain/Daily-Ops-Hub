@@ -1,0 +1,6 @@
+.env
+.env.*
+!.env.example
+appwrite.env
+*.local
+node_modules/

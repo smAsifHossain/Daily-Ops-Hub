@@ -76,14 +76,34 @@ password recovery.
   cross-device, or shared between users.
 - Real email verification, password-reset email, cloud database persistence, storage, and
   per-user permissions require the planned Appwrite Cloud Free migration.
+- Appwrite project values for this deployment:
+  - Endpoint: `https://nyc.cloud.appwrite.io/v1`
+  - Project ID: `6a41f0a600372166cc8a`
+  - Web platform hostname: `smasifhossain.github.io`
 - For local testing of encrypted vault data, run through `localhost` or HTTPS so Web Crypto
   is available in all modern browsers.
+
+## Appwrite Backend Setup
+
+Create a temporary Appwrite API key, set it as an environment variable, then run:
+
+```powershell
+$env:APPWRITE_ENDPOINT="https://nyc.cloud.appwrite.io/v1"
+$env:APPWRITE_PROJECT_ID="6a41f0a600372166cc8a"
+$env:APPWRITE_API_KEY="paste-temporary-api-key-here"
+node scripts/setup-appwrite.mjs
+Remove-Item Env:APPWRITE_API_KEY
+```
+
+The setup script creates the `daily_ops` database, a private `workspaces` collection, and
+an `attachments` bucket. Do not put the API key in frontend code or commit it to GitHub.
 
 ## Files
 
 - `index.html`: browser entry point.
 - `styles.css`: full responsive UI system.
 - `app.js`: application logic, local data store, auth simulation, feature pages.
+- `scripts/setup-appwrite.mjs`: one-time Appwrite database and storage setup.
 - `docs/appwrite-free-deployment.md`: free cloud deployment path.
 - `docs/schema.md`: collection model for Appwrite migration.
 

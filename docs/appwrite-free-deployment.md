@@ -31,8 +31,8 @@ This app is designed to move to Appwrite Cloud Free without changing the product
 The production client will need:
 
 ```text
-APPWRITE_ENDPOINT=
-APPWRITE_PROJECT_ID=
+APPWRITE_ENDPOINT=https://nyc.cloud.appwrite.io/v1
+APPWRITE_PROJECT_ID=6a41f0a600372166cc8a
 APPWRITE_DATABASE_ID=daily_ops
 APPWRITE_BUCKET_ID=attachments
 ```
@@ -77,12 +77,36 @@ To keep the app healthy on a free plan:
 
 ## First Appwrite Migration Tasks
 
-1. Add an Appwrite client module.
-2. Create a `Repository` interface with local and Appwrite implementations.
-3. Move all localStorage reads/writes behind the repository.
-4. Replace local signup/login/reset with Appwrite auth calls.
-5. Add per-document permissions so each user can only read/write their own records.
+1. Add the Web platform for `smasifhossain.github.io`.
+2. Create a temporary Appwrite API key for setup only.
+3. Run `node scripts/setup-appwrite.mjs` with the endpoint, project ID, and API key in environment variables.
+4. Replace local signup/login/reset with Appwrite Auth calls.
+5. Store each user workspace as a private Appwrite document first, then split into feature-level collections later if needed.
 6. Add attachment upload to the `attachments` bucket.
-7. Add pagination and query filters.
-8. Deploy static assets to Appwrite Sites.
+7. Add pagination and query filters when documents are split per feature.
+8. Keep GitHub Pages as the free frontend host.
 
+## One-Time Backend Setup Script
+
+The repository includes `scripts/setup-appwrite.mjs`. It creates:
+
+- Database: `daily_ops`
+- Collection: `workspaces`
+- Storage bucket: `attachments`
+
+The first production backend can store a user's full workspace JSON in one private document.
+This is simpler and safer for the first live version because the existing app is already
+local-first. Later, we can migrate the JSON payload into separate `tasks`, `ideas`, `papers`,
+`prompts`, and `private_vault` collections for deeper querying.
+
+Run from the project folder after creating a temporary API key:
+
+```powershell
+$env:APPWRITE_ENDPOINT="https://nyc.cloud.appwrite.io/v1"
+$env:APPWRITE_PROJECT_ID="6a41f0a600372166cc8a"
+$env:APPWRITE_API_KEY="paste-temporary-api-key-here"
+node scripts/setup-appwrite.mjs
+Remove-Item Env:APPWRITE_API_KEY
+```
+
+Never commit the API key. It is only for backend setup from your machine.
