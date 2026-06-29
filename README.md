@@ -1,8 +1,8 @@
 # Daily Ops Hub
 
-A modern daily operations workspace for tech-minded users. Daily Ops Hub combines a Jira-style Kanban board, idea vaults, research notes, saved prompts, submitted paper tracking, daily planning, analytics, and a client-side encrypted private vault in one deployable web app.
+Daily Ops Hub is a live, dynamic productivity command center for builders, students, researchers, and tech professionals who want their daily work in one clean place. It brings tasks, ideas, research, prompts, papers, notes, planning, analytics, and sensitive records into a focused workspace that is simple to use and powerful enough for real everyday operations.
 
-The current production build is a static JavaScript frontend hosted on GitHub Pages with Appwrite Cloud used for real authentication, email verification/password recovery, and cloud workspace persistence for personal accounts.
+The app is already live on GitHub Pages and connected to Appwrite Cloud for real user accounts, email verification, password recovery, and cloud workspace saving.
 
 Live app: <https://smasifhossain.github.io/Daily-Ops-Hub/>
 
@@ -17,9 +17,8 @@ Live app: <https://smasifhossain.github.io/Daily-Ops-Hub/>
 |-- .gitignore                      # Local secret and generated-file exclusions
 |-- .nojekyll                       # Prevent GitHub Pages from applying Jekyll
 |-- app.js                          # Application logic, UI rendering, auth, and persistence
-|-- index.html                      # Static app entry point
+|-- index.html                      # App entry point
 |-- styles.css                      # Responsive UI system and theme styles
-|-- How to run.txt                  # Short local run note
 `-- README.md                       # Project overview and workflows
 ```
 
@@ -44,7 +43,7 @@ This repo intentionally keeps the frontend lightweight. There is no bundler or p
 
 ### Required Tools
 
-Node.js 18+ - used for the local static server and Appwrite setup script.
+Node.js 18+ - used for the local web server and Appwrite setup script.
 
 ```powershell
 node --version
@@ -60,7 +59,7 @@ git --version
 
 Appwrite Cloud account - required for real production auth, email verification, password recovery, and cloud persistence.
 
-Python 3 - optional static server alternative.
+Python 3 - optional local server alternative.
 
 ```powershell
 python --version
@@ -75,7 +74,7 @@ git clone https://github.com/smAsifHossain/Daily-Ops-Hub.git
 cd Daily-Ops-Hub
 ```
 
-Run a local static server:
+Run the project locally:
 
 ```powershell
 npx serve . -l 8080
@@ -169,9 +168,9 @@ Delete or rotate the temporary API key after setup. Never commit API keys or pla
 
 ## Local Development
 
-The app is a dependency-free static build. Day-to-day changes usually involve:
+The app is a dependency-free browser app. Day-to-day changes usually involve:
 
-- `index.html` for document metadata and static asset links.
+- `index.html` for document metadata and app asset links.
 - `styles.css` for layout, themes, responsive behavior, and component polish.
 - `app.js` for rendering, state management, auth, Appwrite sync, vault encryption, and feature logic.
 - `docs/schema.md` for planned Appwrite collection structure.
@@ -196,7 +195,7 @@ Deployment workflow:
 
 1. Push changes to the `main` branch.
 2. GitHub Actions runs `.github/workflows/pages.yml`.
-3. The workflow uploads the static repository files.
+3. The workflow uploads the application files.
 4. GitHub Pages publishes the app.
 
 Production URL:
@@ -245,8 +244,8 @@ CVV/PIN fields exist for personal records, but storing CVV/PIN data is risky and
 
 | Area | Technology | Purpose |
 | --- | --- | --- |
-| Frontend | HTML, CSS, JavaScript | Static app shell and UI |
-| Hosting | GitHub Pages | Free static deployment |
+| Frontend | HTML, CSS, JavaScript | Dynamic browser UI and app logic |
+| Hosting | GitHub Pages | Production web hosting |
 | CI/CD | GitHub Actions | Pages deployment workflow |
 | Auth | Appwrite Auth | Email/password, verification, recovery |
 | Database | Appwrite Databases | Cloud workspace persistence |
@@ -353,4 +352,4 @@ Keep commits focused and avoid committing local secrets, API keys, or generated 
 
 ## License
 
-No license file has been added yet. Add a `LICENSE` file before distributing or accepting external contributions.
+MIT License - see `LICENSE` for details.
