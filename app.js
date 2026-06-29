@@ -10,6 +10,15 @@
   const DEMO_PASSWORD = "demo@gmail.com";
   const DEMO_WORKSPACE_SEED_VERSION = "2026-06-28-demo-gmail";
   const DEMO_VAULT_RESET_VERSION = "2026-06-27-demo-vault-reset";
+  const APPWRITE_CONFIG = {
+    endpoint: "https://nyc.cloud.appwrite.io/v1",
+    projectId: "6a41f0a600372166cc8a",
+    databaseId: "daily_ops",
+    workspaceCollectionId: "workspaces",
+    bucketId: "attachments",
+    sdkUrl: "https://cdn.jsdelivr.net/npm/appwrite@18.2.0/+esm",
+  };
+  const CLOUD_SCHEMA_VERSION = "workspace-json-v1";
 
   const routes = [
     ["dashboard", "Dashboard", "dashboard"],
@@ -278,8 +287,15 @@
     plannerDate: dateKey(new Date()),
     verifyEmail: "",
     resetEmail: "",
+    resetUserId: "",
+    resetSecret: "",
   };
   let messageTimer = null;
+  let appwritePromise = null;
+  let cloudSaveTimer = null;
+  let cloudSaveInFlight = false;
+  let cloudSaveQueued = false;
+  let cloudSyncMuted = false;
   let vaultState = {
     workspaceId: null,
     unlocked: false,
@@ -289,8 +305,11 @@
   let vaultLockTimer = null;
 
   initTheme();
+  applyCloudUrlState();
   bindEvents();
   render();
+  completeCloudUrlAction();
+  hydrateCloudSession();
 
   function bindEvents() {
     document.addEventListener("submit", onSubmit);
@@ -328,8 +347,9 @@
     };
   }
 
-  function saveDb() {
+  function saveDb(options = {}) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+    if (!options.skipCloud && !cloudSyncMuted) scheduleCloudSave();
   }
 
   function loadSession() {
@@ -347,6 +367,255 @@
     } else {
       localStorage.removeItem(SESSION_KEY);
     }
+  }
+
+  async function getAppwrite() {
+    if (!appwritePromise) {
+      appwritePromise = import(APPWRITE_CONFIG.sdkUrl).then((sdk) => {
+        const client = new sdk.Client().setEndpoint(APPWRITE_CONFIG.endpoint).setProject(APPWRITE_CONFIG.projectId);
+        return {
+          sdk,
+          client,
+          account: new sdk.Account(client),
+          databases: new sdk.Databases(client),
+          storage: new sdk.Storage(client),
+          ID: sdk.ID,
+          Permission: sdk.Permission,
+          Role: sdk.Role,
+        };
+      });
+    }
+    return appwritePromise;
+  }
+
+  function shouldUseCloudAuth(email) {
+    return normalizeEmail(email) !== DEMO_EMAIL;
+  }
+
+  function isCloudUser(user = currentUser()) {
+    return user?.source === "appwrite";
+  }
+
+  function cloudCallbackUrl(action) {
+    const url = new URL(window.location.href);
+    url.search = "";
+    url.hash = "";
+    url.searchParams.set("dailyOpsAction", action);
+    return url.toString();
+  }
+
+  function applyCloudUrlState() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("dailyOpsAction") !== "recovery") return;
+    const userId = params.get("userId") || "";
+    const secret = params.get("secret") || "";
+    if (!userId || !secret) return;
+    ui.authScreen = "reset";
+    ui.resetUserId = userId;
+    ui.resetSecret = secret;
+  }
+
+  async function completeCloudUrlAction() {
+    const params = new URLSearchParams(window.location.search);
+    const action = params.get("dailyOpsAction");
+    const userId = params.get("userId") || "";
+    const secret = params.get("secret") || "";
+    if (!action || !userId || !secret) return;
+
+    if (action === "verify") {
+      try {
+        const { account } = await getAppwrite();
+        await account.updateVerification(userId, secret);
+        ui.authScreen = "login";
+        flash("Email verified. You can log in now.", "good");
+      } catch (error) {
+        console.warn(error);
+        flash(appwriteMessage(error, "Verification link is invalid or expired."), "error");
+      } finally {
+        cleanCloudActionUrl();
+      }
+      return;
+    }
+
+    if (action === "recovery") {
+      ui.authScreen = "reset";
+      ui.resetUserId = userId;
+      ui.resetSecret = secret;
+      cleanCloudActionUrl();
+      render();
+    }
+  }
+
+  function cleanCloudActionUrl() {
+    const url = new URL(window.location.href);
+    ["dailyOpsAction", "userId", "secret", "expire"].forEach((key) => url.searchParams.delete(key));
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  async function hydrateCloudSession() {
+    const activeUser = currentUser();
+    if (activeUser && !isCloudUser(activeUser)) return;
+
+    try {
+      const { account } = await getAppwrite();
+      const profile = await account.get();
+      if (!profile?.$id || !profile.emailVerification) return;
+      const user = await upsertCloudUser(profile);
+      await loadCloudWorkspace(user, { createIfMissing: true });
+      saveSession({ userId: user.id, source: "appwrite", createdAt: new Date().toISOString() });
+      render();
+    } catch (error) {
+      if (!isExpectedGuestError(error)) console.warn(error);
+    }
+  }
+
+  async function upsertCloudUser(profile, password = "") {
+    let user = db.users.find((item) => item.id === profile.$id);
+    const existingByEmail = db.users.find((item) => item.email === normalizeEmail(profile.email));
+    if (!user && existingByEmail && !existingByEmail.source) {
+      existingByEmail.id = profile.$id;
+      user = existingByEmail;
+    }
+    if (!user) {
+      user = {
+        id: profile.$id,
+        name: profile.name || profile.email,
+        email: normalizeEmail(profile.email),
+        passwordHash: "",
+        verified: Boolean(profile.emailVerification),
+        source: "appwrite",
+        createdAt: profile.$createdAt || new Date().toISOString(),
+      };
+      db.users.push(user);
+    }
+    user.name = profile.name || user.name || profile.email;
+    user.email = normalizeEmail(profile.email);
+    user.verified = Boolean(profile.emailVerification);
+    user.source = "appwrite";
+    user.updatedAt = new Date().toISOString();
+    if (password) user.passwordHash = await hash(password);
+    saveDb({ skipCloud: true });
+    return user;
+  }
+
+  async function loadCloudWorkspace(user, options = {}) {
+    try {
+      const { databases } = await getAppwrite();
+      const document = await databases.getDocument(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.workspaceCollectionId,
+        user.id
+      );
+      const workspace = JSON.parse(document.payload || "{}");
+      ensureWorkspaceShape(workspace);
+      workspace.settings = { dataSource: "appwrite", autosave: true, ...(workspace.settings || {}) };
+      cloudSyncMuted = true;
+      db.workspaces[user.id] = workspace;
+      saveDb({ skipCloud: true });
+      cloudSyncMuted = false;
+      return workspace;
+    } catch (error) {
+      cloudSyncMuted = false;
+      if (!isAppwriteNotFound(error) || !options.createIfMissing) throw error;
+      const workspace = makeWorkspace(false);
+      workspace.settings = { dataSource: "appwrite", autosave: true, ...(workspace.settings || {}) };
+      db.workspaces[user.id] = workspace;
+      saveDb({ skipCloud: true });
+      await saveCloudWorkspace(user, workspace);
+      return workspace;
+    }
+  }
+
+  function scheduleCloudSave() {
+    const user = currentUser();
+    if (!isCloudUser(user)) return;
+    if (!db.workspaces[user.id]) return;
+    if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
+    cloudSaveTimer = setTimeout(() => flushCloudSave(), 900);
+  }
+
+  async function flushCloudSave() {
+    const user = currentUser();
+    if (!isCloudUser(user)) return;
+    if (cloudSaveInFlight) {
+      cloudSaveQueued = true;
+      return;
+    }
+
+    cloudSaveInFlight = true;
+    try {
+      await saveCloudWorkspace(user, db.workspaces[user.id]);
+    } catch (error) {
+      console.warn(error);
+      showToast(appwriteMessage(error, "Cloud save failed. Your browser copy is still safe."), "error");
+    } finally {
+      cloudSaveInFlight = false;
+      if (cloudSaveQueued) {
+        cloudSaveQueued = false;
+        scheduleCloudSave();
+      }
+    }
+  }
+
+  async function saveCloudWorkspace(user, workspace) {
+    if (!user || !workspace) return;
+    const { databases, Permission, Role } = await getAppwrite();
+    const now = new Date().toISOString();
+    const data = {
+      userId: user.id,
+      email: user.email,
+      schemaVersion: CLOUD_SCHEMA_VERSION,
+      payload: JSON.stringify(workspace),
+      createdAt: workspace.createdAt || now,
+      updatedAt: now,
+    };
+    const permissions = [
+      Permission.read(Role.user(user.id)),
+      Permission.update(Role.user(user.id)),
+      Permission.delete(Role.user(user.id)),
+    ];
+
+    try {
+      await databases.updateDocument(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.workspaceCollectionId,
+        user.id,
+        data,
+        permissions
+      );
+    } catch (error) {
+      if (!isAppwriteNotFound(error)) throw error;
+      await databases.createDocument(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.workspaceCollectionId,
+        user.id,
+        data,
+        permissions
+      );
+    }
+  }
+
+  async function cloudLogout() {
+    try {
+      const { account } = await getAppwrite();
+      await account.deleteSession("current");
+    } catch (error) {
+      if (!isExpectedGuestError(error)) console.warn(error);
+    }
+  }
+
+  function isAppwriteNotFound(error) {
+    return error?.code === 404 || error?.type === "document_not_found" || /not found/i.test(error?.message || "");
+  }
+
+  function isExpectedGuestError(error) {
+    return error?.code === 401 || /missing scope|guest|unauthorized/i.test(error?.message || "");
+  }
+
+  function appwriteMessage(error, fallback) {
+    const message = error?.message || "";
+    if (!message) return fallback;
+    return message.replace(/^AppwriteException:\s*/i, "");
   }
 
   function initTheme() {
@@ -1269,7 +1538,7 @@
   function renderSignup() {
     return `
       <h2>Create account</h2>
-      <p>A verification code is required before normal login is enabled.</p>
+      <p>A verification email is required before normal login is enabled.</p>
       <form class="form-grid" data-form="signup">
         ${field("name", "Name", "text", "", true)}
         ${field("email", "Email", "email", "", true)}
@@ -1307,7 +1576,7 @@
   function renderForgot() {
     return `
       <h2>Reset password</h2>
-      <p>Enter your account email to receive a reset code and choose a new password securely.</p>
+      <p>Enter your account email to receive a secure reset link and choose a new password.</p>
       <form class="form-grid" data-form="forgot">
         ${field("email", "Email", "email", "", true)}
         <div class="auth-actions">
@@ -1321,12 +1590,15 @@
 
   function renderReset() {
     const pending = latestResetCode(ui.resetEmail);
+    const cloudRecovery = Boolean(ui.resetUserId && ui.resetSecret);
     return `
       <h2>Choose new password</h2>
-      <p>If the account exists, a reset code was sent to ${esc(ui.resetEmail || "that email")}.</p>
+      <p>${cloudRecovery ? "Enter a new password to complete the secure reset link." : `If the account exists, a reset code was sent to ${esc(ui.resetEmail || "that email")}.`}</p>
       <form class="form-grid" data-form="reset">
         <input type="hidden" name="email" value="${esc(ui.resetEmail)}" />
-        ${field("code", "Reset code", "text", "", true)}
+        <input type="hidden" name="resetUserId" value="${esc(ui.resetUserId)}" />
+        <input type="hidden" name="resetSecret" value="${esc(ui.resetSecret)}" />
+        ${cloudRecovery ? "" : field("code", "Reset code", "text", "", true)}
         ${field("password", "New password", "password", "", true)}
         <div class="auth-actions">
           <button class="btn primary" type="submit">${iconLabel("lock", "Update password")}</button>
@@ -2052,11 +2324,12 @@
         <div class="panel">
           <div class="section-head"><h2>Data source</h2></div>
           <p class="hint">
-            This starter build persists to browser localStorage. The app structure is ready for an Appwrite repository adapter
-            once you create the free cloud project and add the endpoint/project IDs.
+            ${isCloudUser(user)
+              ? "This account is connected to Appwrite Cloud. Changes are saved locally first, then synced to your private cloud workspace."
+              : "The demo account uses browser storage for a safe public preview. Personal accounts use Appwrite Cloud for login, email, and cross-device data saving."}
           </p>
           <div class="meta-row" style="margin-top:12px">
-            <span class="pill blue">Mode: ${esc(workspace.settings.dataSource)}</span>
+            <span class="pill blue">Mode: ${esc(isCloudUser(user) ? "appwrite" : workspace.settings.dataSource)}</span>
             <span class="pill teal">Autosave: ${workspace.settings.autosave ? "on" : "off"}</span>
           </div>
         </div>
@@ -2490,6 +2763,29 @@
 
   async function login(data) {
     const email = normalizeEmail(data.email);
+    if (shouldUseCloudAuth(email)) {
+      try {
+        const { account } = await getAppwrite();
+        await cloudLogout();
+        await account.createEmailPasswordSession(email, data.password || "");
+        const profile = await account.get();
+        if (!profile.emailVerification) {
+          await account.createVerification(cloudCallbackUrl("verify")).catch((error) => console.warn(error));
+          await cloudLogout();
+          return flash("Verify your email first. We sent a fresh verification email.", "error");
+        }
+        const user = await upsertCloudUser(profile, data.password || "");
+        await loadCloudWorkspace(user, { createIfMissing: true });
+        saveSession({ userId: user.id, source: "appwrite", createdAt: new Date().toISOString() });
+        ui.message = null;
+        render();
+        return;
+      } catch (error) {
+        console.warn(error);
+        return flash(appwriteMessage(error, "Cloud login failed. Check your email and password."), "error");
+      }
+    }
+
     const user = db.users.find((item) => item.email === email);
     const passwordHash = await hash(data.password || "");
     if (user?.email === DEMO_EMAIL && data.password === DEMO_PASSWORD && user.passwordHash !== passwordHash) {
@@ -2518,6 +2814,29 @@
     if (!name) return flash("Name is required.", "error");
     if (!isEmail(email)) return flash("Enter a valid email.", "error");
     if (!passwordRequirementsMet(password)) return flash(passwordRequirementMessage(), "error");
+    if (shouldUseCloudAuth(email)) {
+      try {
+        const { account, ID } = await getAppwrite();
+        await cloudLogout();
+        await account.create(ID.unique(), email, password, name);
+        await account.createEmailPasswordSession(email, password);
+        const profile = await account.get();
+        const user = await upsertCloudUser(profile, password);
+        db.workspaces[user.id] = makeWorkspace(false);
+        db.workspaces[user.id].settings = { dataSource: "appwrite", autosave: true, ...(db.workspaces[user.id].settings || {}) };
+        await saveCloudWorkspace(user, db.workspaces[user.id]);
+        await account.createVerification(cloudCallbackUrl("verify"));
+        await cloudLogout();
+        saveSession(null);
+        ui.authScreen = "login";
+        ui.verifyEmail = "";
+        render();
+        return flash("Account created. Check your email to verify it before logging in.", "good", false);
+      } catch (error) {
+        console.warn(error);
+        return flash(appwriteMessage(error, "Cloud signup failed. Try again."), "error");
+      }
+    }
     if (db.users.some((user) => user.email === email)) return flash("An account already exists for that email.", "error");
 
     const userId = id("user");
@@ -2562,8 +2881,21 @@
     flash("Account activated. You can log in now.", "good");
   }
 
-  function forgotPassword(data) {
+  async function forgotPassword(data) {
     const email = normalizeEmail(data.email);
+    if (shouldUseCloudAuth(email)) {
+      try {
+        const { account } = await getAppwrite();
+        await account.createRecovery(email, cloudCallbackUrl("recovery"));
+        ui.authScreen = "login";
+        render();
+        return flash("Password reset email sent. Open the secure link to choose a new password.", "good", false);
+      } catch (error) {
+        console.warn(error);
+        return flash(appwriteMessage(error, "Could not send reset email."), "error");
+      }
+    }
+
     const user = db.users.find((item) => item.email === email);
     if (user) createPasswordReset(email);
     saveDb();
@@ -2573,6 +2905,25 @@
   }
 
   async function resetPassword(data) {
+    if (data.resetUserId && data.resetSecret) {
+      const password = data.password || "";
+      if (!passwordRequirementsMet(password)) return flash(passwordRequirementMessage(), "error");
+      try {
+        const { account } = await getAppwrite();
+        await account.updateRecovery(data.resetUserId, data.resetSecret, password);
+        ui.authScreen = "login";
+        ui.resetUserId = "";
+        ui.resetSecret = "";
+        ui.resetEmail = "";
+        saveSession(null);
+        render();
+        return flash("Password reset complete. Log in with the new password.", "good", false);
+      } catch (error) {
+        console.warn(error);
+        return flash(appwriteMessage(error, "Password reset link is invalid or expired."), "error");
+      }
+    }
+
     const email = normalizeEmail(data.email || ui.resetEmail);
     const code = String(data.code || "").trim();
     const password = data.password || "";
@@ -2619,6 +2970,25 @@
     if (!isEmail(email)) return flash("Enter a valid email address.", "error");
 
     const emailChanged = email !== user.email;
+    if (isCloudUser(user)) {
+      try {
+        const { account } = await getAppwrite();
+        if (name !== user.name) await account.updateName(name);
+        if (emailChanged) {
+          if (!data.accountCurrentPassword) return flash("Current password is required to change email.", "error");
+          await account.updateEmail(email, data.accountCurrentPassword || "");
+          await account.createVerification(cloudCallbackUrl("verify")).catch((error) => console.warn(error));
+        }
+        const profile = await account.get();
+        await upsertCloudUser(profile);
+        scheduleCloudSave();
+        return flash(emailChanged ? "Profile saved. Check the new email for verification." : "Profile saved.", "good");
+      } catch (error) {
+        console.warn(error);
+        return flash(appwriteMessage(error, "Could not save profile."), "error");
+      }
+    }
+
     if (emailChanged) {
       const duplicate = db.users.some((item) => item.id !== user.id && item.email === email);
       if (duplicate) return flash("Another account already uses that email.", "error");
@@ -2639,17 +3009,28 @@
     const user = currentUser();
     if (!user) return flash("You need to be logged in to update your password.", "error");
 
-    const currentHash = await hash(data.passwordCurrent || "");
-    if (currentHash !== user.passwordHash) return flash("Current password is incorrect.", "error");
     const nextPassword = data.passwordNew || "";
     if (!passwordRequirementsMet(nextPassword)) return flash(passwordRequirementMessage(), "error");
     if (nextPassword !== (data.passwordConfirm || "")) return flash("New password confirmation does not match.", "error");
+
+    const currentHash = await hash(data.passwordCurrent || "");
+    if (!isCloudUser(user) && currentHash !== user.passwordHash) return flash("Current password is incorrect.", "error");
 
     const workspace = getWorkspace(user.id);
     if (vaultConfigured(workspace)) {
       const reencrypted = await reencryptVaultForPasswordChange(workspace, data.passwordCurrent || "", nextPassword);
       if (!reencrypted) {
         return flash("Private Vault could not be re-encrypted with the current login password.", "error");
+      }
+    }
+
+    if (isCloudUser(user)) {
+      try {
+        const { account } = await getAppwrite();
+        await account.updatePassword(nextPassword, data.passwordCurrent || "");
+      } catch (error) {
+        console.warn(error);
+        return flash(appwriteMessage(error, "Could not update password."), "error");
       }
     }
 
@@ -3193,6 +3574,7 @@
 
   function handleAction(action) {
     if (action === "logout") {
+      if (isCloudUser()) cloudLogout();
       lockVault(false);
       saveSession(null);
       ui = { ...ui, route: "dashboard", query: "", message: null };
