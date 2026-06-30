@@ -35,8 +35,7 @@ Live app: <https://smasifhossain.github.io/Daily-Ops-Hub/>
 - Submitted Papers tracker for venues, submission states, abstracts, Overleaf links, collaborators, conflicts, revisions, and decisions.
 - Private Vault for logins, bank details, cards, API keys, server access, identity records, and secure notes.
 - Client-side vault encryption using Web Crypto AES-GCM with a login-password-derived key.
-- Bottom-right Daily Ops AI assistant for task, deadline, paper, idea, prompt, note, project, and daily-planning questions.
-- Optional free in-browser WebLLM mode using `Llama-3.2-1B-Instruct-q4f16_1-MLC` when the browser supports WebGPU.
+- Bottom-right rule-based Daily Ops AI bot for task, deadline, paper, idea, prompt, note, project, and daily-planning questions.
 - Knowledge Notes, Reading Queue, Daily Planner, Calendar, Projects, Timeline, Analytics, command palette, global search, JSON import, and JSON export.
 
 ## Toolchain & Requirements

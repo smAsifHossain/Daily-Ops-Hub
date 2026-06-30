@@ -19,8 +19,6 @@
     sdkUrl: "https://cdn.jsdelivr.net/npm/appwrite@18.2.0/+esm",
   };
   const CLOUD_SCHEMA_VERSION = "workspace-json-v1";
-  const ASSISTANT_MODEL = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
-  const WEBLLM_SDK_URL = "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm";
 
   const routes = [
     ["dashboard", "Dashboard", "dashboard"],
@@ -302,16 +300,12 @@
     assistantNudgeVisible: false,
     assistantNudgeSeen: false,
     assistantAttention: false,
-    assistantMode: localStorage.getItem("dailyOpsHub.assistantMode") === "rules" ? "rules" : "llm",
     assistantBusy: false,
     assistantMessages: initialAssistantMessages(),
   };
   let messageTimer = null;
   let assistantNudgeTimer = null;
   let assistantNudgeHideTimer = null;
-  let assistantEngine = null;
-  let assistantEngineLoading = false;
-  let assistantEngineReady = false;
   let appwritePromise = null;
   let cloudSaveTimer = null;
   let cloudSaveInFlight = false;
@@ -1728,7 +1722,7 @@
                     <span class="assistant-avatar">${icon("sparkles")}</span>
                     <div>
                       <strong>Daily Ops AI</strong>
-                      <span>Workspace LLM assistant</span>
+                      <span>Rule-based workspace bot</span>
                     </div>
                   </div>
                   <div class="assistant-head-actions">
@@ -1736,10 +1730,6 @@
                     <button class="btn icon" type="button" data-action="close-assistant" title="Close assistant" aria-label="Close assistant">${iconOnly("x", "Close assistant")}</button>
                   </div>
                 </header>
-                <div class="assistant-mode-toggle" role="group" aria-label="Assistant mode">
-                  <button class="assistant-mode-option ${ui.assistantMode === "llm" ? "active" : ""}" type="button" data-assistant-mode="llm" aria-pressed="${ui.assistantMode === "llm"}" title="Use Llama model">${iconLabel("sparkles", "LLM")}</button>
-                  <button class="assistant-mode-option ${ui.assistantMode === "rules" ? "active" : ""}" type="button" data-assistant-mode="rules" aria-pressed="${ui.assistantMode === "rules"}" title="Use rule-based answers">${iconLabel("columns", "Rules")}</button>
-                </div>
                 <div class="assistant-messages" data-assistant-messages>
                   ${ui.assistantMessages.map(renderAssistantMessage).join("")}
                   ${ui.assistantBusy ? renderAssistantTyping() : ""}
@@ -3693,12 +3683,6 @@
       return;
     }
 
-    const assistantMode = target.closest("[data-assistant-mode]");
-    if (assistantMode) {
-      setAssistantMode(assistantMode.dataset.assistantMode);
-      return;
-    }
-
     const assistantPrompt = target.closest("[data-assistant-prompt]");
     if (assistantPrompt) {
       submitAssistantMessage({ message: assistantPrompt.dataset.assistantPrompt });
@@ -3831,7 +3815,7 @@
   }
 
   function assistantIdentityText() {
-    return "I am Daily Ops AI, an LLM-powered assistant tuned for Daily Ops Hub by S M Asif Hossain. When your browser supports it, I use the Llama-3.2-1B model directly in the app, and I can summarize tasks, due dates, priorities, papers, ideas, prompts, notes, projects, and daily plans. I do not inspect Private Vault secrets.";
+    return "I am Daily Ops AI, a rule-based workspace bot tuned for Daily Ops Hub by S M Asif Hossain. I can summarize tasks, due dates, priorities, papers, ideas, prompts, notes, projects, and daily plans without downloading a browser model. I do not inspect Private Vault secrets.";
   }
 
   function isAssistantIdentityQuestion(question) {
@@ -3845,7 +3829,6 @@
     ui.assistantAttention = false;
     clearAssistantNudgeTimers();
     render();
-    if (ui.assistantMode === "llm") warmAssistantLlm();
   }
 
   function clearAssistantNudgeTimers() {
@@ -3908,22 +3891,7 @@
     const guarded = guardedVaultAnswer(workspace, question);
     if (guarded) return guarded;
     if (isAssistantIdentityQuestion(question)) return assistantIdentityText();
-    if (ui.assistantMode === "llm" && assistantEngineReady && assistantEngine) {
-      try {
-        return await runAssistantLlm(workspace, question);
-      } catch (error) {
-        console.warn(error);
-        return localAssistantAnswer(workspace, question);
-      }
-    }
     return localAssistantAnswer(workspace, question);
-  }
-
-  function setAssistantMode(mode) {
-    ui.assistantMode = mode === "rules" ? "rules" : "llm";
-    localStorage.setItem("dailyOpsHub.assistantMode", ui.assistantMode);
-    if (ui.assistantMode === "llm") warmAssistantLlm();
-    render();
   }
 
   function trimAssistantMessages() {
@@ -3932,47 +3900,6 @@
     ui.assistantMessages = [intro, ...rest];
   }
 
-  async function warmAssistantLlm() {
-    if (assistantEngineReady || assistantEngineLoading) return;
-    if (!("gpu" in navigator)) {
-      return;
-    }
-
-    assistantEngineLoading = true;
-
-    try {
-      const webllm = await import(WEBLLM_SDK_URL);
-      assistantEngine = await webllm.CreateMLCEngine(ASSISTANT_MODEL, {
-        initProgressCallback: () => {},
-      });
-      assistantEngineReady = true;
-    } catch (error) {
-      console.warn(error);
-      assistantEngine = null;
-      assistantEngineReady = false;
-    } finally {
-      assistantEngineLoading = false;
-    }
-  }
-
-  async function runAssistantLlm(workspace, question) {
-    const context = assistantSafeContext(workspace);
-    const completion = await assistantEngine.chat.completions.create({
-      messages: [
-        {
-          role: "system",
-          content: `You are Daily Ops AI for Daily Ops Hub. If asked who you are, answer exactly: "${assistantIdentityText()}" Use the provided workspace context for app-specific answers. You may give general productivity guidance, but you do not browse the internet. Never ask for, reveal, infer, or summarize Private Vault secrets such as passwords, CVV, bank details, card numbers, API keys, or server keys. If asked about vault secrets, explain that the vault is protected and excluded from the assistant context.`,
-        },
-        {
-          role: "user",
-          content: `Workspace context JSON:\n${JSON.stringify(context)}\n\nUser question:\n${question}`,
-        },
-      ],
-      temperature: 0.2,
-      max_tokens: 420,
-    });
-    return completion?.choices?.[0]?.message?.content?.trim() || localAssistantAnswer(workspace, question);
-  }
 
   function guardedVaultAnswer(workspace, question) {
     const lower = question.toLowerCase();
@@ -4169,68 +4096,6 @@
     ]
       .filter(Boolean)
       .join("\n");
-  }
-
-  function assistantSafeContext(workspace) {
-    const today = dateKey(new Date());
-    return {
-      app: "Daily Ops Hub",
-      today,
-      taskSortRule: "High priority first, then closest due date, then latest updated.",
-      stats: computeStats(workspace),
-      tasks: activeTasks(workspace).slice(0, 25).map((task) => ({
-        title: task.title,
-        description: task.description,
-        status: taskStatuses.find(([value]) => value === task.status)?.[1] || task.status,
-        priority: task.priority,
-        dueDate: task.dueDate,
-        project: projectName(workspace, task.projectId),
-        tags: task.tags || [],
-      })),
-      todayPlan: workspace.dailyPlans.find((plan) => plan.date === today) || null,
-      papers: workspace.papers
-        .filter((paper) => !paper.archived)
-        .slice(0, 20)
-        .map((paper) => ({
-          title: paper.title,
-          status: paper.status,
-          venue: paper.venue,
-          deadline: paper.deadline,
-          submittedAt: paper.submittedAt,
-          decisionAt: paper.decisionAt,
-          collaborators: paper.collaborators || [],
-          abstract: paper.abstract,
-          nextSteps: paper.body,
-        })),
-      ideas: workspace.ideas.filter((item) => !item.archived).slice(0, 12).map(safeCollectionItem),
-      researchIdeas: workspace.researchItems.filter((item) => !item.archived).slice(0, 12).map(safeCollectionItem),
-      prompts: workspace.prompts.filter((item) => !item.archived).slice(0, 12).map((item) => ({
-        title: item.title,
-        summary: item.summary,
-        category: item.category,
-        model: item.model,
-        status: item.status,
-        favorite: Boolean(item.favorite),
-      })),
-      notes: workspace.notes.filter((item) => !item.archived).slice(0, 12).map(safeCollectionItem),
-      projects: workspace.projects.filter((item) => !item.archived).slice(0, 12).map(safeCollectionItem),
-      privateVault: {
-        encryptedItemCount: workspace.privateVault.items.filter((item) => !item.archived).length,
-        secretsIncluded: false,
-        autoLock: "5 minutes",
-      },
-    };
-  }
-
-  function safeCollectionItem(item) {
-    return {
-      title: item.title,
-      summary: item.summary || item.question || "",
-      status: item.status,
-      favorite: Boolean(item.favorite),
-      tags: item.tags || [],
-      updatedAt: item.updatedAt,
-    };
   }
 
   function assistantTextHtml(text) {

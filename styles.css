@@ -881,7 +881,7 @@ textarea:focus-visible {
   width: 100%;
   max-height: min(680px, calc(100vh - 112px));
   display: grid;
-  grid-template-rows: auto auto minmax(220px, 1fr) auto auto;
+  grid-template-rows: auto minmax(220px, 1fr) auto auto;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line));
   border-radius: var(--radius);
@@ -941,52 +941,6 @@ textarea:focus-visible {
 .assistant-head-actions {
   display: flex;
   gap: 6px;
-}
-
-.assistant-mode-toggle {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-  padding: 8px;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel-strong) 36%, var(--panel));
-}
-
-.assistant-mode-option {
-  min-height: 34px;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  color: var(--muted);
-  background: transparent;
-  font-size: 12px;
-  font-weight: 850;
-  transition:
-    transform 140ms ease,
-    border-color 140ms ease,
-    background-color 140ms ease,
-    color 140ms ease,
-    box-shadow 140ms ease;
-}
-
-.assistant-mode-option:hover {
-  color: var(--text);
-  background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
-}
-
-.assistant-mode-option.active {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
-  background: var(--panel);
-  box-shadow: var(--control-shadow);
-}
-
-.assistant-mode-option .ui-icon {
-  width: 16px;
-  height: 16px;
 }
 
 .assistant-input button:disabled,
@@ -2665,7 +2619,7 @@ textarea:focus-visible {
 
   .assistant-panel {
     max-height: calc(100vh - 92px);
-    grid-template-rows: auto auto minmax(180px, 1fr) auto auto;
+    grid-template-rows: auto minmax(180px, 1fr) auto auto;
   }
 
   .assistant-title span {
