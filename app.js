@@ -301,6 +301,7 @@
     assistantOpen: false,
     assistantNudgeVisible: false,
     assistantNudgeSeen: false,
+    assistantAttention: false,
     assistantBusy: false,
     assistantMessages: initialAssistantMessages(),
   };
@@ -310,7 +311,6 @@
   let assistantEngine = null;
   let assistantEngineLoading = false;
   let assistantEngineReady = false;
-  let assistantEngineStatus = "";
   let appwritePromise = null;
   let cloudSaveTimer = null;
   let cloudSaveInFlight = false;
@@ -1709,10 +1709,8 @@
   }
 
   function renderAssistantWidget(workspace) {
-    const modelButtonLabel = assistantEngineReady ? "Local LLM ready" : assistantEngineLoading ? "Loading local LLM" : "Enable local LLM";
-    const modelButtonDisabled = assistantEngineReady || assistantEngineLoading ? "disabled" : "";
     return `
-      <aside class="assistant-widget ${ui.assistantOpen ? "open" : ""}" aria-live="polite">
+      <aside class="assistant-widget ${ui.assistantOpen ? "open" : ""} ${ui.assistantAttention ? "attention" : ""}" aria-live="polite">
         ${
           !ui.assistantOpen && ui.assistantNudgeVisible
             ? `<button class="assistant-nudge" type="button" data-action="open-assistant">
@@ -1729,7 +1727,7 @@
                     <span class="assistant-avatar">${icon("sparkles")}</span>
                     <div>
                       <strong>Daily Ops AI</strong>
-                      <span>${assistantStatusText()}</span>
+                      <span>Workspace LLM assistant</span>
                     </div>
                   </div>
                   <div class="assistant-head-actions">
@@ -1737,12 +1735,6 @@
                     <button class="btn icon" type="button" data-action="close-assistant" title="Close assistant" aria-label="Close assistant">${iconOnly("x", "Close assistant")}</button>
                   </div>
                 </header>
-                <div class="assistant-model-row">
-                  <button class="mini-btn assistant-model-button" type="button" data-action="load-assistant-llm" ${modelButtonDisabled}>
-                    ${iconLabel(assistantEngineReady ? "check" : "sparkles", modelButtonLabel)}
-                  </button>
-                  <span data-assistant-llm-status>${esc(assistantEngineStatus || assistantPrivacyText())}</span>
-                </div>
                 <div class="assistant-messages" data-assistant-messages>
                   ${ui.assistantMessages.map(renderAssistantMessage).join("")}
                   ${ui.assistantBusy ? renderAssistantTyping() : ""}
@@ -1789,16 +1781,6 @@
       "Show my high priority tasks",
     ];
     return suggestions;
-  }
-
-  function assistantStatusText() {
-    if (assistantEngineReady) return `${ASSISTANT_MODEL} in browser`;
-    if (assistantEngineLoading) return "Local LLM is loading";
-    return "Free workspace assistant";
-  }
-
-  function assistantPrivacyText() {
-    return "Vault secrets stay excluded.";
   }
 
   function renderRoute(workspace) {
@@ -3730,6 +3712,7 @@
         message: null,
         assistantOpen: false,
         assistantNudgeVisible: false,
+        assistantAttention: false,
         assistantMessages: initialAssistantMessages(),
       };
       render();
@@ -3796,10 +3779,6 @@
       render();
       return;
     }
-    if (action === "load-assistant-llm") {
-      loadAssistantLlm();
-      return;
-    }
     if (action === "close-editor") {
       closeEditor();
       render();
@@ -3836,7 +3815,7 @@
       {
         role: "assistant",
         text:
-          "Hi, I am Daily Ops AI, a private workspace assistant tuned for Daily Ops Hub by S M Asif Hossain. Ask me about due tasks, priorities, papers, ideas, prompts, notes, projects, or your plan for today. Private Vault secrets are never inspected.",
+          "Hi, I am Daily Ops AI, an LLM-powered workspace assistant tuned for Daily Ops Hub by S M Asif Hossain. I use the Llama-3.2-1B model when your browser supports it, and I can answer questions about tasks, priorities, papers, ideas, prompts, notes, projects, and your plan for today. Private Vault secrets are never inspected.",
       },
     ];
   }
@@ -3845,8 +3824,10 @@
     ui.assistantOpen = true;
     ui.assistantNudgeVisible = false;
     ui.assistantNudgeSeen = true;
+    ui.assistantAttention = false;
     clearAssistantNudgeTimers();
     render();
+    warmAssistantLlm();
   }
 
   function clearAssistantNudgeTimers() {
@@ -3867,11 +3848,13 @@
       if (!currentUser() || ui.assistantOpen || ui.assistantNudgeSeen) return;
       ui.assistantNudgeVisible = true;
       ui.assistantNudgeSeen = true;
+      ui.assistantAttention = true;
       render();
       assistantNudgeHideTimer = setTimeout(() => {
         assistantNudgeHideTimer = null;
         if (!ui.assistantNudgeVisible) return;
         ui.assistantNudgeVisible = false;
+        ui.assistantAttention = false;
         render();
       }, 7000);
     }, 6500);
@@ -3911,7 +3894,6 @@
         return await runAssistantLlm(workspace, question);
       } catch (error) {
         console.warn(error);
-        assistantEngineStatus = "Local LLM paused. Rule answers are active.";
         return localAssistantAnswer(workspace, question);
       }
     }
@@ -3924,60 +3906,27 @@
     ui.assistantMessages = [intro, ...rest];
   }
 
-  async function loadAssistantLlm() {
+  async function warmAssistantLlm() {
     if (assistantEngineReady || assistantEngineLoading) return;
     if (!("gpu" in navigator)) {
-      assistantEngineStatus = "WebGPU is not available in this browser. Rule answers are active.";
-      ui.assistantMessages.push({
-        role: "assistant",
-        text: "This browser does not expose WebGPU, so the in-browser LLM cannot load here. I can still answer workspace questions with the free local rule assistant.",
-      });
-      render();
       return;
     }
 
     assistantEngineLoading = true;
-    assistantEngineStatus = "Preparing local model...";
-    ui.assistantOpen = true;
-    ui.assistantMessages.push({
-      role: "assistant",
-      text: `Loading ${ASSISTANT_MODEL} in your browser. The first download can take a little while, then it is cached locally.`,
-    });
-    render();
 
     try {
       const webllm = await import(WEBLLM_SDK_URL);
       assistantEngine = await webllm.CreateMLCEngine(ASSISTANT_MODEL, {
-        initProgressCallback: (report) => {
-          const percent = Number.isFinite(report?.progress) ? `${Math.round(report.progress * 100)}%` : "";
-          assistantEngineStatus = [report?.text, percent].filter(Boolean).join(" ");
-          updateAssistantLlmStatus();
-        },
+        initProgressCallback: () => {},
       });
       assistantEngineReady = true;
-      assistantEngineStatus = "Local LLM ready. No API key is used.";
-      ui.assistantMessages.push({
-        role: "assistant",
-        text: `${ASSISTANT_MODEL} is ready. I will still keep Private Vault secrets out of the assistant context.`,
-      });
     } catch (error) {
       console.warn(error);
       assistantEngine = null;
       assistantEngineReady = false;
-      assistantEngineStatus = "Could not load the local LLM. Rule answers are active.";
-      ui.assistantMessages.push({
-        role: "assistant",
-        text: "The local LLM could not load from this browser right now. You can still ask workspace questions using the free local assistant.",
-      });
     } finally {
       assistantEngineLoading = false;
-      render();
     }
-  }
-
-  function updateAssistantLlmStatus() {
-    const status = document.querySelector("[data-assistant-llm-status]");
-    if (status) status.textContent = assistantEngineStatus || assistantPrivacyText();
   }
 
   async function runAssistantLlm(workspace, question) {
@@ -4021,7 +3970,7 @@
     const stats = computeStats(workspace);
 
     if (/who are you|introduce|what can you do|help/.test(lower)) {
-      return "I am Daily Ops AI, a free in-browser assistant tuned for Daily Ops Hub by S M Asif Hossain. I can summarize tasks, due dates, priorities, papers, ideas, prompts, notes, projects, and daily plans. I do not inspect Private Vault secrets.";
+      return "I am Daily Ops AI, an LLM-powered assistant tuned for Daily Ops Hub by S M Asif Hossain. When your browser supports it, I use the Llama-3.2-1B model directly in the app, and I can summarize tasks, due dates, priorities, papers, ideas, prompts, notes, projects, and daily plans. I do not inspect Private Vault secrets.";
     }
 
     if (/paper|submission|submitted|review|venue|overleaf|collaborator/.test(lower)) {
