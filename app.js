@@ -302,6 +302,7 @@
     assistantNudgeVisible: false,
     assistantNudgeSeen: false,
     assistantAttention: false,
+    assistantMode: localStorage.getItem("dailyOpsHub.assistantMode") === "rules" ? "rules" : "llm",
     assistantBusy: false,
     assistantMessages: initialAssistantMessages(),
   };
@@ -1735,6 +1736,10 @@
                     <button class="btn icon" type="button" data-action="close-assistant" title="Close assistant" aria-label="Close assistant">${iconOnly("x", "Close assistant")}</button>
                   </div>
                 </header>
+                <div class="assistant-mode-toggle" role="group" aria-label="Assistant mode">
+                  <button class="assistant-mode-option ${ui.assistantMode === "llm" ? "active" : ""}" type="button" data-assistant-mode="llm" aria-pressed="${ui.assistantMode === "llm"}" title="Use Llama model">${iconLabel("sparkles", "LLM")}</button>
+                  <button class="assistant-mode-option ${ui.assistantMode === "rules" ? "active" : ""}" type="button" data-assistant-mode="rules" aria-pressed="${ui.assistantMode === "rules"}" title="Use rule-based answers">${iconLabel("columns", "Rules")}</button>
+                </div>
                 <div class="assistant-messages" data-assistant-messages>
                   ${ui.assistantMessages.map(renderAssistantMessage).join("")}
                   ${ui.assistantBusy ? renderAssistantTyping() : ""}
@@ -3688,6 +3693,12 @@
       return;
     }
 
+    const assistantMode = target.closest("[data-assistant-mode]");
+    if (assistantMode) {
+      setAssistantMode(assistantMode.dataset.assistantMode);
+      return;
+    }
+
     const assistantPrompt = target.closest("[data-assistant-prompt]");
     if (assistantPrompt) {
       submitAssistantMessage({ message: assistantPrompt.dataset.assistantPrompt });
@@ -3814,10 +3825,17 @@
     return [
       {
         role: "assistant",
-        text:
-          "Hi, I am Daily Ops AI, an LLM-powered workspace assistant tuned for Daily Ops Hub by S M Asif Hossain. I use the Llama-3.2-1B model when your browser supports it, and I can answer questions about tasks, priorities, papers, ideas, prompts, notes, projects, and your plan for today. Private Vault secrets are never inspected.",
+        text: assistantIdentityText(),
       },
     ];
+  }
+
+  function assistantIdentityText() {
+    return "I am Daily Ops AI, an LLM-powered assistant tuned for Daily Ops Hub by S M Asif Hossain. When your browser supports it, I use the Llama-3.2-1B model directly in the app, and I can summarize tasks, due dates, priorities, papers, ideas, prompts, notes, projects, and daily plans. I do not inspect Private Vault secrets.";
+  }
+
+  function isAssistantIdentityQuestion(question) {
+    return /who are you|introduce|what can you do|help/i.test(question);
   }
 
   function openAssistant() {
@@ -3827,7 +3845,7 @@
     ui.assistantAttention = false;
     clearAssistantNudgeTimers();
     render();
-    warmAssistantLlm();
+    if (ui.assistantMode === "llm") warmAssistantLlm();
   }
 
   function clearAssistantNudgeTimers() {
@@ -3889,7 +3907,8 @@
   async function buildAssistantAnswer(workspace, question) {
     const guarded = guardedVaultAnswer(workspace, question);
     if (guarded) return guarded;
-    if (assistantEngineReady && assistantEngine) {
+    if (isAssistantIdentityQuestion(question)) return assistantIdentityText();
+    if (ui.assistantMode === "llm" && assistantEngineReady && assistantEngine) {
       try {
         return await runAssistantLlm(workspace, question);
       } catch (error) {
@@ -3898,6 +3917,13 @@
       }
     }
     return localAssistantAnswer(workspace, question);
+  }
+
+  function setAssistantMode(mode) {
+    ui.assistantMode = mode === "rules" ? "rules" : "llm";
+    localStorage.setItem("dailyOpsHub.assistantMode", ui.assistantMode);
+    if (ui.assistantMode === "llm") warmAssistantLlm();
+    render();
   }
 
   function trimAssistantMessages() {
@@ -3935,8 +3961,7 @@
       messages: [
         {
           role: "system",
-          content:
-            "You are Daily Ops AI, a concise in-browser assistant for Daily Ops Hub. You are tuned for this app by S M Asif Hossain. Use the provided workspace context for app-specific answers. You may give general productivity guidance, but you do not browse the internet. Never ask for, reveal, infer, or summarize Private Vault secrets such as passwords, CVV, bank details, card numbers, API keys, or server keys. If asked about vault secrets, explain that the vault is protected and excluded from the assistant context.",
+          content: `You are Daily Ops AI for Daily Ops Hub. If asked who you are, answer exactly: "${assistantIdentityText()}" Use the provided workspace context for app-specific answers. You may give general productivity guidance, but you do not browse the internet. Never ask for, reveal, infer, or summarize Private Vault secrets such as passwords, CVV, bank details, card numbers, API keys, or server keys. If asked about vault secrets, explain that the vault is protected and excluded from the assistant context.`,
         },
         {
           role: "user",
@@ -3969,8 +3994,8 @@
     const openTasks = activeTasks(workspace);
     const stats = computeStats(workspace);
 
-    if (/who are you|introduce|what can you do|help/.test(lower)) {
-      return "I am Daily Ops AI, an LLM-powered assistant tuned for Daily Ops Hub by S M Asif Hossain. When your browser supports it, I use the Llama-3.2-1B model directly in the app, and I can summarize tasks, due dates, priorities, papers, ideas, prompts, notes, projects, and daily plans. I do not inspect Private Vault secrets.";
+    if (isAssistantIdentityQuestion(question)) {
+      return assistantIdentityText();
     }
 
     if (/paper|submission|submitted|review|venue|overleaf|collaborator/.test(lower)) {
