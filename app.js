@@ -8,7 +8,7 @@
   const LEGACY_DEMO_EMAIL = "demo@dailyops.local";
   const DEMO_EMAIL = "demo@gmail.com";
   const DEMO_PASSWORD = "demo@gmail.com";
-  const DEMO_WORKSPACE_SEED_VERSION = "2026-06-28-demo-gmail";
+  const DEMO_WORKSPACE_SEED_VERSION = "2026-06-29-research-standalone";
   const DEMO_VAULT_RESET_VERSION = "2026-06-27-demo-vault-reset";
   const APPWRITE_CONFIG = {
     endpoint: "https://nyc.cloud.appwrite.io/v1",
@@ -136,7 +136,6 @@
         ["nextAction", "Next action", "text", false],
         ["status", "Status", "select", false],
         ["tagsText", "Tags", "text", false],
-        ["projectId", "Project", "project", false],
       ],
     },
     prompt: {
@@ -911,7 +910,7 @@
         id: researchProjectId,
         title: "AI Research Pipeline",
         summary: "Paper tracking, literature review, and experiment planning.",
-        body: "Keep submitted papers, research ideas, prompts, notes, and sources tied to one research track.",
+        body: "Keep submitted papers, prompts, notes, and sources organized for a focused research track.",
         status: "Active",
         tags: ["research", "ai"],
         favorite: true,
@@ -1026,7 +1025,6 @@
         nextAction: "Add onboarding copy to documentation, not the working app surface.",
         status: "Investigating",
         tags: ["security", "ux"],
-        projectId,
         favorite: true,
         archived: false,
         createdAt: now,
@@ -1044,7 +1042,6 @@
         nextAction: "Keep icon buttons and verify tap targets.",
         status: "Validated",
         tags: ["mobile", "kanban"],
-        projectId,
         favorite: false,
         archived: false,
         createdAt: now,
@@ -1722,7 +1719,7 @@
                     <span class="assistant-avatar">${icon("sparkles")}</span>
                     <div>
                       <strong>Daily Ops AI</strong>
-                      <span>Rule-based workspace bot</span>
+                      <span>LLM-powered bot</span>
                     </div>
                   </div>
                   <div class="assistant-head-actions">
@@ -1951,7 +1948,7 @@
       )
       .join("");
     return `
-      <article class="task-card" draggable="true" data-task-id="${esc(task.id)}">
+      <article class="task-card clickable-card" draggable="true" tabindex="0" role="button" data-task-id="${esc(task.id)}" data-edit-type="task" data-id="${esc(task.id)}" aria-label="Open ${esc(task.title)} details">
         <div>
           <h3>${esc(task.title)}</h3>
           ${task.description ? `<p>${esc(task.description)}</p>` : ""}
@@ -2028,10 +2025,10 @@
 
   function renderItemCard(workspace, type, item) {
     const schema = schemas[type];
-    const project = workspace.projects.find((projectItem) => projectItem.id === item.projectId);
+    const project = type === "research" ? null : workspace.projects.find((projectItem) => projectItem.id === item.projectId);
     const preview = item.abstract || item.question || item.summary || item.url || item.body || "";
     return `
-      <article class="item-card">
+      <article class="item-card clickable-card" tabindex="0" role="button" data-edit-type="${type}" data-id="${esc(item.id)}" aria-label="Open ${esc(item.title)} details">
         <div>
           <h3>${esc(item.title)}</h3>
           ${preview ? `<p>${esc(trim(preview, 210))}</p>` : ""}
@@ -3199,12 +3196,12 @@
         body: "",
         status: schema.defaultStatus,
         tags: ["quick-capture"],
-        projectId: "",
         favorite: false,
         archived: false,
         createdAt: now,
         updatedAt: now,
       };
+      if (type !== "research") item.projectId = "";
       if (type === "research") item.question = title;
       if (type === "bookmark") item.url = "";
       if (type === "paper") item.abstract = "";
@@ -3302,7 +3299,11 @@
     delete item.conflictsText;
     delete item.keywordsText;
     item.status = data.status || schema.defaultStatus;
-    item.projectId = data.projectId || "";
+    if (type === "research") {
+      delete item.projectId;
+    } else {
+      item.projectId = data.projectId || "";
+    }
     item.updatedAt = now;
 
     logActivity(workspace, `${creating ? "Created" : "Updated"} ${schema.title.toLowerCase()}`, type, item.title);
@@ -3616,10 +3617,13 @@
 
     const edit = target.closest("[data-edit-type]");
     if (edit) {
-      ui.query = "";
-      ui.route = target.closest("[data-search-route]")?.dataset.searchRoute || ui.route;
-      openEditor(edit.dataset.editType, edit.dataset.id);
-      return;
+      const interactive = target.closest("a, button, input, select, textarea");
+      if (!(interactive && interactive !== edit)) {
+        ui.query = "";
+        ui.route = target.closest("[data-search-route]")?.dataset.searchRoute || ui.route;
+        openEditor(edit.dataset.editType, edit.dataset.id);
+        return;
+      }
     }
 
     const archive = target.closest("[data-archive-type]");
@@ -3815,7 +3819,7 @@
   }
 
   function assistantIdentityText() {
-    return "I am Daily Ops AI, a rule-based workspace bot tuned for Daily Ops Hub by S M Asif Hossain. I can summarize tasks, due dates, priorities, papers, ideas, prompts, notes, projects, and daily plans without downloading a browser model. I do not inspect Private Vault secrets.";
+    return "I am Daily Ops AI, a lightweight workspace bot tuned for Daily Ops Hub by S M Asif Hossain. I can summarize tasks, due dates, priorities, papers, ideas, prompts, notes, projects, and daily plans without downloading a browser model. I do not inspect Private Vault secrets.";
   }
 
   function isAssistantIdentityQuestion(question) {
@@ -4179,6 +4183,12 @@
       ui.sidebarOpen = false;
       ui.assistantOpen = false;
       render();
+      return;
+    }
+    if ((event.key === "Enter" || event.key === " ") && event.target.matches?.(".clickable-card[data-edit-type]")) {
+      event.preventDefault();
+      ui.query = "";
+      openEditor(event.target.dataset.editType, event.target.dataset.id);
     }
   }
 
