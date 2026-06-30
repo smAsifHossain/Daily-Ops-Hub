@@ -8,7 +8,7 @@
   const LEGACY_DEMO_EMAIL = "demo@dailyops.local";
   const DEMO_EMAIL = "demo@gmail.com";
   const DEMO_PASSWORD = "demo@gmail.com";
-  const DEMO_WORKSPACE_SEED_VERSION = "2026-06-29-research-standalone";
+  const DEMO_WORKSPACE_SEED_VERSION = "2026-06-30-paper-standalone";
   const DEMO_VAULT_RESET_VERSION = "2026-06-27-demo-vault-reset";
   const APPWRITE_CONFIG = {
     endpoint: "https://nyc.cloud.appwrite.io/v1",
@@ -201,10 +201,9 @@
         ["blindReview", "Blind review notes", "text", false],
         ["conflictsText", "Conflicts of interest", "text", false],
         ["revisionNotes", "Reviewer or revision notes", "textarea", false],
-        ["body", "Private notes and next steps", "textarea", false],
+        ["body", "Notes", "textarea", false],
         ["keywordsText", "Keywords", "text", false],
         ["tagsText", "Tags", "text", false],
-        ["projectId", "Project", "project", false],
       ],
     },
     note: {
@@ -807,7 +806,6 @@
       nextAction: "Create a quota dashboard after Appwrite integration.",
       status: "Investigating",
       tags: ["architecture", "free-tier"],
-      projectId,
       favorite: false,
       archived: false,
       createdAt: now,
@@ -856,7 +854,6 @@
       body: "Next edge cases: deadline changes, venue switch, collaborator order, and rejected-to-resubmit flow.",
       keywords: ["productivity", "ai-tools", "personal-knowledge-management"],
       tags: ["paper", "research"],
-      projectId,
       favorite: false,
       archived: false,
       createdAt: now,
@@ -1111,7 +1108,6 @@
         body: "Track reviewer comments, decision date, and artifact release checklist here.",
         keywords: ["prompts", "operations", "knowledge-work"],
         tags: ["submitted", "prompt"],
-        projectId: researchProjectId,
         favorite: true,
         archived: false,
         createdAt: now,
@@ -1141,7 +1137,6 @@
         body: "Use this record for the deploy-readiness paper narrative.",
         keywords: ["local-first", "dashboard", "security"],
         tags: ["preprint", "revision"],
-        projectId,
         favorite: false,
         archived: false,
         createdAt: now,
@@ -2025,7 +2020,7 @@
 
   function renderItemCard(workspace, type, item) {
     const schema = schemas[type];
-    const project = type === "research" ? null : workspace.projects.find((projectItem) => projectItem.id === item.projectId);
+    const project = ["research", "paper"].includes(type) ? null : workspace.projects.find((projectItem) => projectItem.id === item.projectId);
     const preview = item.abstract || item.question || item.summary || item.url || item.body || "";
     return `
       <article class="item-card clickable-card" tabindex="0" role="button" data-edit-type="${type}" data-id="${esc(item.id)}" aria-label="Open ${esc(item.title)} details">
@@ -3201,7 +3196,7 @@
         createdAt: now,
         updatedAt: now,
       };
-      if (type !== "research") item.projectId = "";
+      if (!["research", "paper"].includes(type)) item.projectId = "";
       if (type === "research") item.question = title;
       if (type === "bookmark") item.url = "";
       if (type === "paper") item.abstract = "";
@@ -3299,7 +3294,7 @@
     delete item.conflictsText;
     delete item.keywordsText;
     item.status = data.status || schema.defaultStatus;
-    if (type === "research") {
+    if (["research", "paper"].includes(type)) {
       delete item.projectId;
     } else {
       item.projectId = data.projectId || "";
