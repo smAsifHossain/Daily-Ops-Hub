@@ -19,6 +19,8 @@
     sdkUrl: "https://cdn.jsdelivr.net/npm/appwrite@18.2.0/+esm",
   };
   const CLOUD_SCHEMA_VERSION = "workspace-json-v1";
+  const ASSISTANT_MODEL = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
+  const WEBLLM_SDK_URL = "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm";
 
   const routes = [
     ["dashboard", "Dashboard", "dashboard"],
@@ -75,6 +77,8 @@
     moon: `<path d="M21 12.8A8.5 8.5 0 1 1 11.2 3 6.7 6.7 0 0 0 21 12.8Z"></path>`,
     panel: `<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path>`,
     plus: `<path d="M12 5v14"></path><path d="M5 12h14"></path>`,
+    send: `<path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path>`,
+    sparkles: `<path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5Z"></path><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z"></path><path d="M5 4l.7 1.8L7.5 6.5l-1.8.7L5 9l-.7-1.8-1.8-.7 1.8-.7Z"></path>`,
     search: `<circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path>`,
     settings: `<path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"></path><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V22a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1A2 2 0 1 1 7.1 5l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.9 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"></path>`,
     shield: `<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-5"></path>`,
@@ -294,8 +298,19 @@
     resetEmail: "",
     resetUserId: "",
     resetSecret: "",
+    assistantOpen: false,
+    assistantNudgeVisible: false,
+    assistantNudgeSeen: false,
+    assistantBusy: false,
+    assistantMessages: initialAssistantMessages(),
   };
   let messageTimer = null;
+  let assistantNudgeTimer = null;
+  let assistantNudgeHideTimer = null;
+  let assistantEngine = null;
+  let assistantEngineLoading = false;
+  let assistantEngineReady = false;
+  let assistantEngineStatus = "";
   let appwritePromise = null;
   let cloudSaveTimer = null;
   let cloudSaveInFlight = false;
@@ -1451,10 +1466,12 @@
   function render() {
     const user = currentUser();
     if (!user) {
+      clearAssistantNudgeTimers();
       renderAuth();
       return;
     }
     renderApp(user);
+    scheduleAssistantNudge();
   }
 
   function renderAuth() {
@@ -1660,7 +1677,9 @@
       ${ui.editor ? renderEditorModal(workspace) : ""}
       ${ui.vaultEditor ? renderVaultEditorModal(workspace) : ""}
       ${ui.commandOpen ? renderCommandPalette() : ""}
+      ${renderAssistantWidget(workspace)}
     `;
+    requestAnimationFrame(scrollAssistantToBottom);
   }
 
   function navButton(route, label, iconName, workspace) {
@@ -1687,6 +1706,99 @@
       projects: workspace.projects.filter((item) => !item.archived).length,
     };
     return map[route] || "";
+  }
+
+  function renderAssistantWidget(workspace) {
+    const modelButtonLabel = assistantEngineReady ? "Local LLM ready" : assistantEngineLoading ? "Loading local LLM" : "Enable local LLM";
+    const modelButtonDisabled = assistantEngineReady || assistantEngineLoading ? "disabled" : "";
+    return `
+      <aside class="assistant-widget ${ui.assistantOpen ? "open" : ""}" aria-live="polite">
+        ${
+          !ui.assistantOpen && ui.assistantNudgeVisible
+            ? `<button class="assistant-nudge" type="button" data-action="open-assistant">
+                <strong>Ask Daily Ops AI</strong>
+                <span>Deadlines, priorities, papers, ideas, prompts, and focus plans.</span>
+              </button>`
+            : ""
+        }
+        ${
+          ui.assistantOpen
+            ? `<section class="assistant-panel" role="dialog" aria-label="Daily Ops AI assistant">
+                <header class="assistant-head">
+                  <div class="assistant-title">
+                    <span class="assistant-avatar">${icon("sparkles")}</span>
+                    <div>
+                      <strong>Daily Ops AI</strong>
+                      <span>${assistantStatusText()}</span>
+                    </div>
+                  </div>
+                  <div class="assistant-head-actions">
+                    <button class="btn icon" type="button" data-action="clear-assistant-chat" title="Reset chat" aria-label="Reset chat">${iconOnly("archive", "Reset chat")}</button>
+                    <button class="btn icon" type="button" data-action="close-assistant" title="Close assistant" aria-label="Close assistant">${iconOnly("x", "Close assistant")}</button>
+                  </div>
+                </header>
+                <div class="assistant-model-row">
+                  <button class="mini-btn assistant-model-button" type="button" data-action="load-assistant-llm" ${modelButtonDisabled}>
+                    ${iconLabel(assistantEngineReady ? "check" : "sparkles", modelButtonLabel)}
+                  </button>
+                  <span data-assistant-llm-status>${esc(assistantEngineStatus || assistantPrivacyText())}</span>
+                </div>
+                <div class="assistant-messages" data-assistant-messages>
+                  ${ui.assistantMessages.map(renderAssistantMessage).join("")}
+                  ${ui.assistantBusy ? renderAssistantTyping() : ""}
+                </div>
+                <div class="assistant-suggestions">
+                  ${assistantSuggestions(workspace).map((item) => `<button class="mini-btn" type="button" data-assistant-prompt="${esc(item)}">${esc(item)}</button>`).join("")}
+                </div>
+                <form class="assistant-input" data-form="assistant-chat">
+                  <input name="message" autocomplete="off" placeholder="Ask about your workspace..." ${ui.assistantBusy ? "disabled" : ""} />
+                  <button class="btn icon primary" type="submit" title="Send" aria-label="Send" ${ui.assistantBusy ? "disabled" : ""}>${iconOnly("send", "Send")}</button>
+                </form>
+              </section>`
+            : ""
+        }
+        <button class="assistant-fab" type="button" data-action="${ui.assistantOpen ? "close-assistant" : "open-assistant"}" title="${ui.assistantOpen ? "Close Daily Ops AI" : "Open Daily Ops AI"}" aria-label="${ui.assistantOpen ? "Close Daily Ops AI" : "Open Daily Ops AI"}">
+          ${icon(ui.assistantOpen ? "x" : "message-code")}
+        </button>
+      </aside>
+    `;
+  }
+
+  function renderAssistantMessage(message) {
+    return `
+      <div class="assistant-message ${message.role === "user" ? "user" : "assistant"}">
+        <div class="assistant-bubble">${assistantTextHtml(message.text)}</div>
+      </div>
+    `;
+  }
+
+  function renderAssistantTyping() {
+    return `
+      <div class="assistant-message assistant">
+        <div class="assistant-bubble typing"><span></span><span></span><span></span></div>
+      </div>
+    `;
+  }
+
+  function assistantSuggestions(workspace) {
+    const stats = computeStats(workspace);
+    const suggestions = [
+      "What should I focus on today?",
+      stats.overdue ? "Which tasks are overdue?" : "Which tasks are due soon?",
+      "Summarize my active papers",
+      "Show my high priority tasks",
+    ];
+    return suggestions;
+  }
+
+  function assistantStatusText() {
+    if (assistantEngineReady) return `${ASSISTANT_MODEL} in browser`;
+    if (assistantEngineLoading) return "Local LLM is loading";
+    return "Free workspace assistant";
+  }
+
+  function assistantPrivacyText() {
+    return "Vault secrets stay excluded.";
   }
 
   function renderRoute(workspace) {
@@ -2776,6 +2888,7 @@
     if (formType === "account-profile") return saveAccountProfile(data);
     if (formType === "account-password") return saveAccountPassword(data);
     if (formType === "import-json") return importJson(data);
+    if (formType === "assistant-chat") return submitAssistantMessage(data);
   }
 
   function readFormData(form) {
@@ -3593,6 +3706,12 @@
       return;
     }
 
+    const assistantPrompt = target.closest("[data-assistant-prompt]");
+    if (assistantPrompt) {
+      submitAssistantMessage({ message: assistantPrompt.dataset.assistantPrompt });
+      return;
+    }
+
     const copyPrompt = target.closest("[data-copy-prompt]");
     if (copyPrompt) {
       copyPromptText(copyPrompt.dataset.copyPrompt);
@@ -3604,7 +3723,15 @@
       if (isCloudUser()) cloudLogout();
       lockVault(false);
       saveSession(null);
-      ui = { ...ui, route: "dashboard", query: "", message: null };
+      ui = {
+        ...ui,
+        route: "dashboard",
+        query: "",
+        message: null,
+        assistantOpen: false,
+        assistantNudgeVisible: false,
+        assistantMessages: initialAssistantMessages(),
+      };
       render();
       return;
     }
@@ -3655,6 +3782,24 @@
       render();
       return;
     }
+    if (action === "open-assistant") {
+      openAssistant();
+      return;
+    }
+    if (action === "close-assistant") {
+      ui.assistantOpen = false;
+      render();
+      return;
+    }
+    if (action === "clear-assistant-chat") {
+      ui.assistantMessages = initialAssistantMessages();
+      render();
+      return;
+    }
+    if (action === "load-assistant-llm") {
+      loadAssistantLlm();
+      return;
+    }
     if (action === "close-editor") {
       closeEditor();
       render();
@@ -3684,6 +3829,443 @@
     if (action === "export-json") {
       exportJson();
     }
+  }
+
+  function initialAssistantMessages() {
+    return [
+      {
+        role: "assistant",
+        text:
+          "Hi, I am Daily Ops AI, a private workspace assistant tuned for Daily Ops Hub by S M Asif Hossain. Ask me about due tasks, priorities, papers, ideas, prompts, notes, projects, or your plan for today. Private Vault secrets are never inspected.",
+      },
+    ];
+  }
+
+  function openAssistant() {
+    ui.assistantOpen = true;
+    ui.assistantNudgeVisible = false;
+    ui.assistantNudgeSeen = true;
+    clearAssistantNudgeTimers();
+    render();
+  }
+
+  function clearAssistantNudgeTimers() {
+    if (assistantNudgeTimer) {
+      clearTimeout(assistantNudgeTimer);
+      assistantNudgeTimer = null;
+    }
+    if (assistantNudgeHideTimer) {
+      clearTimeout(assistantNudgeHideTimer);
+      assistantNudgeHideTimer = null;
+    }
+  }
+
+  function scheduleAssistantNudge() {
+    if (!currentUser() || ui.assistantOpen || ui.assistantNudgeSeen || assistantNudgeTimer || assistantNudgeHideTimer) return;
+    assistantNudgeTimer = setTimeout(() => {
+      assistantNudgeTimer = null;
+      if (!currentUser() || ui.assistantOpen || ui.assistantNudgeSeen) return;
+      ui.assistantNudgeVisible = true;
+      ui.assistantNudgeSeen = true;
+      render();
+      assistantNudgeHideTimer = setTimeout(() => {
+        assistantNudgeHideTimer = null;
+        if (!ui.assistantNudgeVisible) return;
+        ui.assistantNudgeVisible = false;
+        render();
+      }, 7000);
+    }, 6500);
+  }
+
+  async function submitAssistantMessage(data) {
+    const question = (data.message || "").trim();
+    if (!question || ui.assistantBusy) return;
+    const workspace = getWorkspace();
+    ui.assistantOpen = true;
+    ui.assistantNudgeVisible = false;
+    ui.assistantMessages.push({ role: "user", text: question });
+    ui.assistantBusy = true;
+    render();
+
+    try {
+      const answer = await buildAssistantAnswer(workspace, question);
+      ui.assistantMessages.push({ role: "assistant", text: answer });
+    } catch (error) {
+      console.warn(error);
+      ui.assistantMessages.push({
+        role: "assistant",
+        text: "I could not complete that answer. The local workspace rules are still available, so try asking about tasks, papers, ideas, prompts, or today.",
+      });
+    } finally {
+      ui.assistantBusy = false;
+      trimAssistantMessages();
+      render();
+    }
+  }
+
+  async function buildAssistantAnswer(workspace, question) {
+    const guarded = guardedVaultAnswer(workspace, question);
+    if (guarded) return guarded;
+    if (assistantEngineReady && assistantEngine) {
+      try {
+        return await runAssistantLlm(workspace, question);
+      } catch (error) {
+        console.warn(error);
+        assistantEngineStatus = "Local LLM paused. Rule answers are active.";
+        return localAssistantAnswer(workspace, question);
+      }
+    }
+    return localAssistantAnswer(workspace, question);
+  }
+
+  function trimAssistantMessages() {
+    const intro = ui.assistantMessages[0];
+    const rest = ui.assistantMessages.slice(1).slice(-24);
+    ui.assistantMessages = [intro, ...rest];
+  }
+
+  async function loadAssistantLlm() {
+    if (assistantEngineReady || assistantEngineLoading) return;
+    if (!("gpu" in navigator)) {
+      assistantEngineStatus = "WebGPU is not available in this browser. Rule answers are active.";
+      ui.assistantMessages.push({
+        role: "assistant",
+        text: "This browser does not expose WebGPU, so the in-browser LLM cannot load here. I can still answer workspace questions with the free local rule assistant.",
+      });
+      render();
+      return;
+    }
+
+    assistantEngineLoading = true;
+    assistantEngineStatus = "Preparing local model...";
+    ui.assistantOpen = true;
+    ui.assistantMessages.push({
+      role: "assistant",
+      text: `Loading ${ASSISTANT_MODEL} in your browser. The first download can take a little while, then it is cached locally.`,
+    });
+    render();
+
+    try {
+      const webllm = await import(WEBLLM_SDK_URL);
+      assistantEngine = await webllm.CreateMLCEngine(ASSISTANT_MODEL, {
+        initProgressCallback: (report) => {
+          const percent = Number.isFinite(report?.progress) ? `${Math.round(report.progress * 100)}%` : "";
+          assistantEngineStatus = [report?.text, percent].filter(Boolean).join(" ");
+          updateAssistantLlmStatus();
+        },
+      });
+      assistantEngineReady = true;
+      assistantEngineStatus = "Local LLM ready. No API key is used.";
+      ui.assistantMessages.push({
+        role: "assistant",
+        text: `${ASSISTANT_MODEL} is ready. I will still keep Private Vault secrets out of the assistant context.`,
+      });
+    } catch (error) {
+      console.warn(error);
+      assistantEngine = null;
+      assistantEngineReady = false;
+      assistantEngineStatus = "Could not load the local LLM. Rule answers are active.";
+      ui.assistantMessages.push({
+        role: "assistant",
+        text: "The local LLM could not load from this browser right now. You can still ask workspace questions using the free local assistant.",
+      });
+    } finally {
+      assistantEngineLoading = false;
+      render();
+    }
+  }
+
+  function updateAssistantLlmStatus() {
+    const status = document.querySelector("[data-assistant-llm-status]");
+    if (status) status.textContent = assistantEngineStatus || assistantPrivacyText();
+  }
+
+  async function runAssistantLlm(workspace, question) {
+    const context = assistantSafeContext(workspace);
+    const completion = await assistantEngine.chat.completions.create({
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are Daily Ops AI, a concise in-browser assistant for Daily Ops Hub. You are tuned for this app by S M Asif Hossain. Use the provided workspace context for app-specific answers. You may give general productivity guidance, but you do not browse the internet. Never ask for, reveal, infer, or summarize Private Vault secrets such as passwords, CVV, bank details, card numbers, API keys, or server keys. If asked about vault secrets, explain that the vault is protected and excluded from the assistant context.",
+        },
+        {
+          role: "user",
+          content: `Workspace context JSON:\n${JSON.stringify(context)}\n\nUser question:\n${question}`,
+        },
+      ],
+      temperature: 0.2,
+      max_tokens: 420,
+    });
+    return completion?.choices?.[0]?.message?.content?.trim() || localAssistantAnswer(workspace, question);
+  }
+
+  function guardedVaultAnswer(workspace, question) {
+    const lower = question.toLowerCase();
+    const asksVault = /vault|password|cvv|card|bank|api key|secret|credential|account number|routing|ssh/i.test(lower);
+    if (!asksVault) return "";
+    const vaultCount = workspace.privateVault.items.filter((item) => !item.archived).length;
+    const asksSecret = /show|reveal|tell|what is|copy|list|display|password|cvv|card number|account number|routing|api key|secret|ssh/i.test(lower);
+    if (asksSecret) {
+      return `I cannot inspect or reveal Private Vault secrets. Your vault currently has ${vaultCount} encrypted item${vaultCount === 1 ? "" : "s"}, and it auto-locks after 5 minutes. Open Private Vault and unlock it with your login password when you need to view a protected field.`;
+    }
+    return `Your Private Vault has ${vaultCount} encrypted item${vaultCount === 1 ? "" : "s"}. I can discuss vault status and safety, but secret values stay excluded from the assistant.`;
+  }
+
+  function localAssistantAnswer(workspace, question) {
+    const lower = question.toLowerCase();
+    const today = dateKey(new Date());
+    const tomorrow = addDays(1);
+    const weekEnd = addDays(7);
+    const openTasks = activeTasks(workspace);
+    const stats = computeStats(workspace);
+
+    if (/who are you|introduce|what can you do|help/.test(lower)) {
+      return "I am Daily Ops AI, a free in-browser assistant tuned for Daily Ops Hub by S M Asif Hossain. I can summarize tasks, due dates, priorities, papers, ideas, prompts, notes, projects, and daily plans. I do not inspect Private Vault secrets.";
+    }
+
+    if (/paper|submission|submitted|review|venue|overleaf|collaborator/.test(lower)) {
+      return paperAnswer(workspace, lower);
+    }
+
+    if (/business|idea|startup/.test(lower)) {
+      return collectionAnswer("Business ideas", workspace.ideas.filter((item) => !item.archived), ["summary", "status"]);
+    }
+
+    if (/research|hypothesis|source/.test(lower)) {
+      return collectionAnswer("Research ideas", workspace.researchItems.filter((item) => !item.archived), ["question", "status"]);
+    }
+
+    if (/prompt/.test(lower)) {
+      return collectionAnswer("Saved prompts", workspace.prompts.filter((item) => !item.archived), ["summary", "model", "status"]);
+    }
+
+    if (/overdue|late|missed/.test(lower)) {
+      return taskListAnswer("Overdue tasks", openTasks.filter((task) => task.dueDate && task.dueDate < today), workspace, "No overdue tasks. Good breathing room.");
+    }
+
+    if (/today|focus|daily plan|plan my day|what should i/.test(lower)) {
+      const plan = workspace.dailyPlans.find((item) => item.date === today);
+      const dueToday = openTasks.filter((task) => task.dueDate === today);
+      const top = openTasks.slice(0, 3);
+      const lines = [
+        plan?.focus ? `Today's focus: ${plan.focus}` : "No focus is saved for today yet.",
+        dueToday.length ? formatTaskList("Due today", dueToday, workspace, 5) : "No open tasks are due today.",
+        top.length ? formatTaskList("Best next tasks", top, workspace, 3) : "No open tasks are waiting.",
+      ];
+      return lines.join("\n\n");
+    }
+
+    if (/tomorrow/.test(lower)) {
+      return taskListAnswer("Tasks due tomorrow", openTasks.filter((task) => task.dueDate === tomorrow), workspace, "No open tasks are due tomorrow.");
+    }
+
+    if (/week|soon|upcoming|due/.test(lower)) {
+      const dueSoon = openTasks.filter((task) => task.dueDate && task.dueDate >= today && task.dueDate <= weekEnd);
+      return taskListAnswer("Tasks due in the next 7 days", dueSoon, workspace, "No open tasks are due in the next 7 days.");
+    }
+
+    if (/high priority|priority|urgent|important/.test(lower)) {
+      return taskListAnswer("High priority tasks", openTasks.filter((task) => task.priority === "High"), workspace, "No open high priority tasks right now.");
+    }
+
+    if (/in progress|doing|current/.test(lower)) {
+      return taskListAnswer("In-progress tasks", workspace.tasks.filter((task) => !task.archived && task.status === "inProgress").sort(compareTasksByPriorityAndDueDate), workspace, "No tasks are currently in progress.");
+    }
+
+    if (/backlog|todo|to do/.test(lower)) {
+      return taskListAnswer("Backlog tasks", workspace.tasks.filter((task) => !task.archived && task.status === "backlog").sort(compareTasksByPriorityAndDueDate), workspace, "Your backlog is empty.");
+    }
+
+    if (/done|completed|finished/.test(lower)) {
+      const done = workspace.tasks.filter((task) => !task.archived && task.status === "done").sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+      return taskListAnswer("Recently completed tasks", done, workspace, "No completed tasks yet.");
+    }
+
+    if (/note|knowledge/.test(lower)) {
+      return collectionAnswer("Knowledge notes", workspace.notes.filter((item) => !item.archived), ["summary", "status"]);
+    }
+
+    if (/project/.test(lower)) {
+      return collectionAnswer("Projects", workspace.projects.filter((item) => !item.archived), ["summary", "status"]);
+    }
+
+    if (/summary|dashboard|overview|status/.test(lower)) {
+      return [
+        "Workspace summary",
+        `Open tasks: ${stats.openTasks}`,
+        `Done today: ${stats.doneToday}`,
+        `Overdue tasks: ${stats.overdue}`,
+        `Ideas and research items: ${stats.ideas}`,
+        `Active papers: ${stats.activePapers}`,
+        `Prompts, notes, and bookmarks: ${stats.assets}`,
+        openTasks.length ? `Next suggested task: ${taskLine(openTasks[0], workspace)}` : "Next suggested task: none",
+      ].join("\n");
+    }
+
+    return [
+      "I can help with your Daily Ops Hub workspace.",
+      openTasks.length ? `A useful place to start is: ${taskLine(openTasks[0], workspace)}` : "You do not have open tasks waiting right now.",
+      "Try asking: which tasks are due soon, what should I focus on today, summarize active papers, or show high priority tasks.",
+    ].join("\n");
+  }
+
+  function activeTasks(workspace) {
+    return workspace.tasks.filter((task) => !task.archived && task.status !== "done").sort(compareTasksByPriorityAndDueDate);
+  }
+
+  function taskListAnswer(title, tasks, workspace, emptyText) {
+    if (!tasks.length) return emptyText;
+    return formatTaskList(title, tasks, workspace, 8);
+  }
+
+  function formatTaskList(title, tasks, workspace, limit = 6) {
+    const shown = tasks.slice(0, limit);
+    const extra = tasks.length - shown.length;
+    return [
+      title,
+      ...shown.map((task, index) => `${index + 1}. ${taskLine(task, workspace)}`),
+      extra > 0 ? `+${extra} more item${extra === 1 ? "" : "s"}.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  function taskLine(task, workspace) {
+    const project = projectName(workspace, task.projectId);
+    const due = task.dueDate ? `due ${formatDate(task.dueDate)}` : "no due date";
+    const status = taskStatuses.find(([value]) => value === task.status)?.[1] || task.status;
+    return `${task.title} - ${task.priority} priority, ${status}, ${due}${project ? `, ${project}` : ""}`;
+  }
+
+  function projectName(workspace, projectId) {
+    if (!projectId) return "";
+    return workspace.projects.find((project) => project.id === projectId)?.title || "";
+  }
+
+  function paperAnswer(workspace, lower) {
+    const papers = workspace.papers.filter((paper) => !paper.archived);
+    if (!papers.length) return "No submitted papers are saved yet.";
+    const activeStatuses = ["Idea", "Drafting", "Internal Review", "Ready to Submit", "Submitted", "Under Review", "Revision"];
+    const filtered = /deadline|due|upcoming/.test(lower)
+      ? papers.filter((paper) => paper.deadline || paper.decisionAt).sort(comparePaperDates)
+      : papers.filter((paper) => activeStatuses.includes(paper.status)).sort(comparePaperDates);
+    const list = filtered.length ? filtered : papers.sort(comparePaperDates);
+    return [
+      /deadline|due|upcoming/.test(lower) ? "Paper deadlines and decisions" : "Active paper pipeline",
+      ...list.slice(0, 8).map((paper, index) => `${index + 1}. ${paperLine(paper)}`),
+      list.length > 8 ? `+${list.length - 8} more paper${list.length - 8 === 1 ? "" : "s"}.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  function paperLine(paper) {
+    const parts = [paper.title, paper.status || "No status"];
+    if (paper.venue) parts.push(paper.venue);
+    if (paper.deadline) parts.push(`deadline ${formatDate(paper.deadline)}`);
+    if (paper.submittedAt) parts.push(`submitted ${formatDate(paper.submittedAt)}`);
+    if (paper.decisionAt) parts.push(`decision ${formatDate(paper.decisionAt)}`);
+    if (paper.collaborators?.length) parts.push(`with ${paper.collaborators.join(", ")}`);
+    return parts.join(" - ");
+  }
+
+  function comparePaperDates(a, b) {
+    const aDate = a.deadline || a.decisionAt || a.submittedAt || a.updatedAt || "";
+    const bDate = b.deadline || b.decisionAt || b.submittedAt || b.updatedAt || "";
+    if (!aDate && !bDate) return 0;
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    return new Date(aDate) - new Date(bDate);
+  }
+
+  function collectionAnswer(title, items, fields) {
+    const visible = items
+      .slice()
+      .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0))
+      .slice(0, 8);
+    if (!visible.length) return `${title} is empty.`;
+    return [
+      title,
+      ...visible.map((item, index) => {
+        const details = fields.map((fieldName) => item[fieldName]).filter(Boolean).join(" - ");
+        return `${index + 1}. ${item.title}${details ? ` - ${details}` : ""}`;
+      }),
+      items.length > visible.length ? `+${items.length - visible.length} more item${items.length - visible.length === 1 ? "" : "s"}.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  function assistantSafeContext(workspace) {
+    const today = dateKey(new Date());
+    return {
+      app: "Daily Ops Hub",
+      today,
+      taskSortRule: "High priority first, then closest due date, then latest updated.",
+      stats: computeStats(workspace),
+      tasks: activeTasks(workspace).slice(0, 25).map((task) => ({
+        title: task.title,
+        description: task.description,
+        status: taskStatuses.find(([value]) => value === task.status)?.[1] || task.status,
+        priority: task.priority,
+        dueDate: task.dueDate,
+        project: projectName(workspace, task.projectId),
+        tags: task.tags || [],
+      })),
+      todayPlan: workspace.dailyPlans.find((plan) => plan.date === today) || null,
+      papers: workspace.papers
+        .filter((paper) => !paper.archived)
+        .slice(0, 20)
+        .map((paper) => ({
+          title: paper.title,
+          status: paper.status,
+          venue: paper.venue,
+          deadline: paper.deadline,
+          submittedAt: paper.submittedAt,
+          decisionAt: paper.decisionAt,
+          collaborators: paper.collaborators || [],
+          abstract: paper.abstract,
+          nextSteps: paper.body,
+        })),
+      ideas: workspace.ideas.filter((item) => !item.archived).slice(0, 12).map(safeCollectionItem),
+      researchIdeas: workspace.researchItems.filter((item) => !item.archived).slice(0, 12).map(safeCollectionItem),
+      prompts: workspace.prompts.filter((item) => !item.archived).slice(0, 12).map((item) => ({
+        title: item.title,
+        summary: item.summary,
+        category: item.category,
+        model: item.model,
+        status: item.status,
+        favorite: Boolean(item.favorite),
+      })),
+      notes: workspace.notes.filter((item) => !item.archived).slice(0, 12).map(safeCollectionItem),
+      projects: workspace.projects.filter((item) => !item.archived).slice(0, 12).map(safeCollectionItem),
+      privateVault: {
+        encryptedItemCount: workspace.privateVault.items.filter((item) => !item.archived).length,
+        secretsIncluded: false,
+        autoLock: "5 minutes",
+      },
+    };
+  }
+
+  function safeCollectionItem(item) {
+    return {
+      title: item.title,
+      summary: item.summary || item.question || "",
+      status: item.status,
+      favorite: Boolean(item.favorite),
+      tags: item.tags || [],
+      updatedAt: item.updatedAt,
+    };
+  }
+
+  function assistantTextHtml(text) {
+    return esc(text).replace(/\n/g, "<br>");
+  }
+
+  function scrollAssistantToBottom() {
+    const messages = document.querySelector("[data-assistant-messages]");
+    if (messages) messages.scrollTop = messages.scrollHeight;
   }
 
   async function demoLogin() {
@@ -3756,6 +4338,7 @@
       ui.editor = null;
       ui.vaultEditor = null;
       ui.sidebarOpen = false;
+      ui.assistantOpen = false;
       render();
     }
   }
