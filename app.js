@@ -268,6 +268,11 @@
     ["inProgress", "In Progress"],
     ["done", "Done"],
   ];
+  const taskPriorityRank = {
+    High: 0,
+    Medium: 1,
+    Low: 2,
+  };
 
   const app = document.getElementById("app");
   let db = loadDb();
@@ -1826,7 +1831,7 @@
           .map(([status, label]) => {
             const tasks = workspace.tasks
               .filter((task) => !task.archived && task.status === status)
-              .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+              .sort(compareTasksByPriorityAndDueDate);
             return `
               <section class="kanban-column" data-drop-status="${status}">
                 <div class="column-head"><strong>${label}</strong><span>${tasks.length}</span></div>
@@ -1876,6 +1881,24 @@
         </div>
       </article>
     `;
+  }
+
+  function compareTasksByPriorityAndDueDate(a, b) {
+    const priorityDifference = priorityRank(a.priority) - priorityRank(b.priority);
+    if (priorityDifference) return priorityDifference;
+
+    const dueDifference = dueDateRank(a.dueDate) - dueDateRank(b.dueDate);
+    if (dueDifference) return dueDifference;
+
+    return new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0);
+  }
+
+  function priorityRank(priority) {
+    return taskPriorityRank[priority] ?? taskPriorityRank.Medium;
+  }
+
+  function dueDateRank(dueDate) {
+    return dueDate ? new Date(`${dueDate}T00:00:00`).getTime() : Number.POSITIVE_INFINITY;
   }
 
   function renderCollectionPage(workspace, type) {
@@ -2154,7 +2177,9 @@
   function renderDailyPlanner(workspace) {
     const selected = ui.plannerDate || dateKey(new Date());
     const plan = workspace.dailyPlans.find((item) => item.date === selected) || {};
-    const dueTasks = workspace.tasks.filter((task) => !task.archived && task.dueDate === selected);
+    const dueTasks = workspace.tasks
+      .filter((task) => !task.archived && task.dueDate === selected)
+      .sort(compareTasksByPriorityAndDueDate);
     return `
       ${pageHead(
         "Daily Planner",
@@ -2220,7 +2245,9 @@
 
   function renderCalendarCell(workspace, date, activeMonth) {
     const key = dateKey(date);
-    const tasks = workspace.tasks.filter((task) => !task.archived && task.dueDate === key);
+    const tasks = workspace.tasks
+      .filter((task) => !task.archived && task.dueDate === key)
+      .sort(compareTasksByPriorityAndDueDate);
     const paperEvents = workspace.papers
       .filter((paper) => !paper.archived)
       .flatMap((paper) => {
