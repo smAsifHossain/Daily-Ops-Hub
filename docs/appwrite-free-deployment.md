@@ -10,6 +10,7 @@ This app is designed to move to Appwrite Cloud Free without changing the product
 - Password reset: Appwrite email/password recovery
 - Database: Appwrite Databases
 - File attachments: Appwrite Storage
+- Daily email digest: Appwrite Functions plus Appwrite Messaging email provider
 - Realtime board updates: Appwrite Realtime
 - Optional server work: Appwrite Functions
 
@@ -93,11 +94,33 @@ The repository includes `scripts/setup-appwrite.mjs`. It creates:
 - Database: `daily_ops`
 - Collection: `workspaces`
 - Storage bucket: `attachments`
+- Scheduled function: `functions/daily-digest`
 
 The first production backend can store a user's full workspace JSON in one private document.
 This is simpler and safer for the first live version because the existing app is already
 local-first. Later, we can migrate the JSON payload into separate `tasks`, `ideas`, `papers`,
 `prompts`, and `private_vault` collections for deeper querying.
+
+## Daily Email Digest Function
+
+The repository includes `functions/daily-digest`, an Appwrite Function that sends a daily
+8:00 AM workspace email. The function runs hourly and checks each workspace's saved timezone
+so the digest is sent during that user's local 8 AM hour.
+
+Configure the function in Appwrite:
+
+```text
+Runtime: Node.js
+Root directory: functions/daily-digest
+Entrypoint: src/main.js
+Build command: npm install
+Schedule: 0 * * * *
+Scopes: databases.read, databases.write, messaging.write
+```
+
+Add an Appwrite Messaging email provider before sending real digest emails. The digest includes
+task counts, due work, business ideas, research ideas, and submitted paper focus items. It does
+not include Private Vault data.
 
 Run from the project folder after creating a temporary API key:
 

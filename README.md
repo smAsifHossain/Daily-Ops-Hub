@@ -12,6 +12,7 @@ Live app: <https://smasifhossain.github.io/Daily-Ops-Hub/>
 .
 |-- assets/                         # App logo and browser favicon
 |-- docs/                           # Appwrite deployment notes and data schema
+|-- functions/daily-digest/         # Scheduled Appwrite email digest function
 |-- scripts/                        # One-time backend setup utilities
 |-- .github/workflows/pages.yml     # GitHub Pages deployment workflow
 |-- .gitignore                      # Local secret and generated-file exclusions
@@ -33,6 +34,7 @@ Live app: <https://smasifhossain.github.io/Daily-Ops-Hub/>
 - Drag-and-drop task movement plus mobile-safe move controls.
 - Business Ideas, Research Ideas, and Saved Prompts workspaces.
 - Submitted Papers tracker for venues, submission states, abstracts, Overleaf links, collaborators, conflicts, revisions, and decisions.
+- Daily 8 AM email digest for tasks due today, tasks due this week, and business/research/paper focus items.
 - Private Vault for logins, bank details, cards, API keys, server access, identity records, and secure notes.
 - Client-side vault encryption using Web Crypto AES-GCM with a login-password-derived key.
 - Bottom-right Daily Ops AI bot for task, deadline, paper, idea, prompt, note, project, and daily-planning questions.
@@ -134,6 +136,7 @@ The Appwrite setup creates:
 | Database | `daily_ops` | Stores cloud workspace data |
 | Collection | `workspaces` | One private workspace document per Appwrite user |
 | Storage bucket | `attachments` | Reserved for future file attachments |
+| Function | `daily-digest` | Sends the 8 AM Daily Ops Hub email digest |
 | Web platform | `smasifhossain.github.io` | Allows GitHub Pages auth callbacks |
 
 The first production backend stores each user workspace as a private JSON payload. This keeps the initial live release simple and reliable while preserving the option to later split tasks, ideas, papers, prompts, vault metadata, and activity into separate collections.
@@ -166,6 +169,32 @@ Remove-Item Env:APPWRITE_API_KEY
 ```
 
 Delete or rotate the temporary API key after setup. Never commit API keys or place them in frontend code.
+
+### Daily Email Digest
+
+Daily Ops Hub includes an Appwrite Function at `functions/daily-digest` that sends each user a timezone-aware 8:00 AM email with:
+
+- tasks left today,
+- tasks due this week,
+- overdue task count,
+- business idea focus items,
+- research idea focus items,
+- submitted paper deadlines, decisions, and active paper work.
+
+Private Vault data is not included in the email.
+
+To enable the digest in Appwrite:
+
+```text
+Runtime: Node.js
+Root directory: functions/daily-digest
+Entrypoint: src/main.js
+Build command: npm install
+Schedule: 0 * * * *
+Scopes: databases.read, databases.write, messaging.write
+```
+
+Configure an Appwrite Messaging email provider before sending production digests. Use `?force=1&dryRun=1` on the function URL to test without sending email.
 
 ## Local Development
 

@@ -34,6 +34,22 @@ createdAt: datetime
 updatedAt: datetime
 ```
 
+### workspace_settings
+
+Stored inside the current `workspaces.payload` JSON document.
+
+```text
+dataSource: local | appwrite
+autosave: boolean
+emailDigest: {
+  enabled: boolean
+  time: 08:00
+  timeZone: string
+  lastSentDate: date
+  lastSentAt: datetime
+}
+```
+
 ### tasks
 
 ```text
@@ -92,7 +108,6 @@ confidence: Low | Medium | High
 nextAction: string
 status: Question | Investigating | Validated | Rejected | Archived
 tags: string[]
-projectId: string
 favorite: boolean
 archived: boolean
 createdAt: datetime
@@ -142,7 +157,6 @@ revisionNotes: string
 body: string
 keywords: string[]
 tags: string[]
-projectId: string
 favorite: boolean
 archived: boolean
 createdAt: datetime

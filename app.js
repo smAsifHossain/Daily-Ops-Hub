@@ -10,6 +10,7 @@
   const DEMO_PASSWORD = "demo@gmail.com";
   const DEMO_WORKSPACE_SEED_VERSION = "2026-06-30-paper-standalone";
   const DEMO_VAULT_RESET_VERSION = "2026-06-27-demo-vault-reset";
+  const DEFAULT_DIGEST_TIME = "08:00";
   const APPWRITE_CONFIG = {
     endpoint: "https://nyc.cloud.appwrite.io/v1",
     projectId: "6a41f0a600372166cc8a",
@@ -678,6 +679,11 @@
         }
       });
     }
+    const normalizedDigest = normalizeEmailDigestSettings(workspace.settings.emailDigest);
+    if (emailDigestSettingsChanged(workspace.settings.emailDigest, normalizedDigest)) {
+      workspace.settings.emailDigest = normalizedDigest;
+      changed = true;
+    }
     if (!workspace.privateVault || typeof workspace.privateVault !== "object") {
       workspace.privateVault = { ...base.privateVault, items: [] };
       changed = true;
@@ -698,6 +704,49 @@
       }
     }
     return changed;
+  }
+
+  function browserTimeZone() {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Chicago";
+    } catch {
+      return "America/Chicago";
+    }
+  }
+
+  function defaultEmailDigestSettings() {
+    return {
+      enabled: true,
+      time: DEFAULT_DIGEST_TIME,
+      timeZone: browserTimeZone(),
+      lastSentDate: "",
+      lastSentAt: "",
+    };
+  }
+
+  function normalizeEmailDigestSettings(settings = {}) {
+    const defaults = defaultEmailDigestSettings();
+    return {
+      ...defaults,
+      ...(settings && typeof settings === "object" ? settings : {}),
+      enabled: settings?.enabled === undefined ? defaults.enabled : Boolean(settings.enabled),
+      time: DEFAULT_DIGEST_TIME,
+      timeZone: settings?.timeZone || defaults.timeZone,
+    };
+  }
+
+  function emailDigestSettingsChanged(current, normalized) {
+    if (!current || typeof current !== "object") return true;
+    return ["enabled", "time", "timeZone", "lastSentDate", "lastSentAt"].some((key) => current[key] !== normalized[key]);
+  }
+
+  function isValidTimeZone(timeZone) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date());
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   function freshPrivateVault() {
@@ -731,6 +780,7 @@
       settings: {
         dataSource: "local",
         autosave: true,
+        emailDigest: defaultEmailDigestSettings(),
       },
     };
 
@@ -2410,6 +2460,7 @@
 
   function renderSettings(workspace) {
     const user = currentUser();
+    const digest = normalizeEmailDigestSettings(workspace.settings.emailDigest);
     return `
       ${pageHead("Settings", "Manage your account, data export, import, and the Appwrite migration path.", "")}
       <section class="settings-grid">
@@ -2428,6 +2479,24 @@
           ${field("passwordConfirm", "Confirm new password", "password", "", true)}
           ${passwordMatchIndicator()}
           <button class="btn primary" type="submit">${iconLabel("lock", "Update password")}</button>
+        </form>
+        <form class="panel form-grid" data-form="email-digest">
+          <div class="section-head"><h2>Daily Email Digest</h2></div>
+          <label class="toggle-row">
+            <input type="checkbox" name="emailDigestEnabled" ${digest.enabled ? "checked" : ""} />
+            <span class="toggle-control" aria-hidden="true"></span>
+            <span>
+              <strong>Send every day at 8:00 AM</strong>
+              <small>Tasks left today, tasks due this week, and weekly focus items for business ideas, research, and papers.</small>
+            </span>
+          </label>
+          ${field("emailDigestTimeZone", "Timezone", "text", digest.timeZone, true, "Use an IANA timezone such as America/Chicago or Asia/Dhaka.")}
+          <div class="meta-row">
+            <span class="pill blue">${icon("message-code")} Scheduled: 8:00 AM</span>
+            <span class="pill teal">${digest.lastSentDate ? `Last sent: ${esc(digest.lastSentDate)}` : "Waiting for first send"}</span>
+          </div>
+          <p class="hint">Real email delivery uses the Appwrite scheduled digest function and an Appwrite Messaging email provider.</p>
+          <button class="btn primary" type="submit">${iconLabel("check", "Save digest")}</button>
         </form>
         <div class="panel">
           <div class="section-head"><h2>Data source</h2></div>
@@ -2856,6 +2925,7 @@
     if (formType === "vault-item-editor") return saveVaultItem(form, data);
     if (formType === "account-profile") return saveAccountProfile(data);
     if (formType === "account-password") return saveAccountPassword(data);
+    if (formType === "email-digest") return saveEmailDigestSettings(data);
     if (formType === "import-json") return importJson(data);
     if (formType === "assistant-chat") return submitAssistantMessage(data);
   }
@@ -2865,6 +2935,10 @@
     form.querySelectorAll("input, select, textarea").forEach((fieldEl) => {
       if (!fieldEl.name || fieldEl.disabled) return;
       if (fieldEl.closest("[data-vault-section][hidden]")) return;
+      if (fieldEl.type === "checkbox") {
+        data[fieldEl.name] = fieldEl.checked ? "on" : "";
+        return;
+      }
       data[fieldEl.name] = fieldEl.value;
     });
     return data;
@@ -3147,6 +3221,27 @@
     user.updatedAt = new Date().toISOString();
     saveDb();
     flash(vaultConfigured(workspace) ? "Password reset complete. Private Vault was re-encrypted." : "Password reset complete.", "good");
+  }
+
+  function saveEmailDigestSettings(data) {
+    const workspace = getWorkspace();
+    const current = normalizeEmailDigestSettings(workspace.settings.emailDigest);
+    const timeZone = (data.emailDigestTimeZone || "").trim() || browserTimeZone();
+    if (!isValidTimeZone(timeZone)) return flash("Enter a valid timezone such as America/Chicago or Asia/Dhaka.", "error");
+    workspace.settings.emailDigest = {
+      ...current,
+      enabled: data.emailDigestEnabled === "on",
+      time: DEFAULT_DIGEST_TIME,
+      timeZone,
+      updatedAt: new Date().toISOString(),
+    };
+    saveDb();
+    flash(
+      workspace.settings.emailDigest.enabled
+        ? `Daily digest enabled for 8:00 AM (${workspace.settings.emailDigest.timeZone}).`
+        : "Daily email digest disabled.",
+      "good"
+    );
   }
 
   function createVerification(email) {
